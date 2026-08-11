@@ -9,7 +9,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
-import { Slider } from '@/components/ui/slider';
+import { Button } from '@/components/ui/button';
+
+export type Resolution = '1k' | '2k' | '4k';
 
 export interface GenerationParams {
   width: number;
@@ -18,6 +20,8 @@ export interface GenerationParams {
   steps?: number;
   cfgScale?: number;
   seed?: number;
+  resolution?: Resolution;
+  aspect?: string;
 }
 
 interface ParameterPanelProps {
@@ -26,50 +30,92 @@ interface ParameterPanelProps {
   disabled?: boolean;
 }
 
-const PRESET_SIZES = [
-  { label: '1:1 (1024×1024)', width: 1024, height: 1024 },
-  { label: '16:9 (1344×768)', width: 1344, height: 768 },
-  { label: '9:16 (768×1344)', width: 768, height: 1344 },
-  { label: '4:3 (1152×896)', width: 1152, height: 896 },
-  { label: '3:4 (896×1152)', width: 896, height: 1152 },
+// 1K 分辨率下各比例的基础尺寸
+const ASPECT_RATIOS = [
+  { ratio: '1:1', width: 1024, height: 1024 },
+  { ratio: '16:9', width: 1344, height: 768 },
+  { ratio: '9:16', width: 768, height: 1344 },
+  { ratio: '4:3', width: 1152, height: 896 },
+  { ratio: '3:4', width: 896, height: 1152 },
 ];
+
+const RESOLUTIONS: {
+  value: Resolution;
+  label: string;
+  multiplier: number;
+}[] = [
+  { value: '1k', label: '1K', multiplier: 1 },
+  { value: '2k', label: '2K', multiplier: 2 },
+  { value: '4k', label: '4K', multiplier: 4 },
+];
+
+const clamp = (v: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, v));
 
 export function ParameterPanel({
   params,
   onChange,
   disabled = false,
 }: ParameterPanelProps) {
-  const handleSizeChange = (value: string) => {
-    const preset = PRESET_SIZES.find((s) => s.label === value);
-    if (preset) {
-      onChange({ ...params, width: preset.width, height: preset.height });
-    }
-  };
+  const resolution = params.resolution || '1k';
+  const aspect = params.aspect || '1:1';
+  const multiplier =
+    RESOLUTIONS.find((r) => r.value === resolution)?.multiplier ?? 1;
 
-  const currentSizeLabel =
-    PRESET_SIZES.find(
-      (s) => s.width === params.width && s.height === params.height
-    )?.label || '自定义';
+  // 应用分辨率+比例组合，计算最终宽高
+  const applySize = (nextResolution: Resolution, nextAspect: string) => {
+    const mult =
+      RESOLUTIONS.find((r) => r.value === nextResolution)?.multiplier ?? 1;
+    const ratio =
+      ASPECT_RATIOS.find((a) => a.ratio === nextAspect) || ASPECT_RATIOS[0];
+    onChange({
+      ...params,
+      resolution: nextResolution,
+      aspect: nextAspect,
+      width: ratio.width * mult,
+      height: ratio.height * mult,
+    });
+  };
 
   return (
     <div className="space-y-6 rounded-lg border p-4">
       <h3 className="font-semibold">生成参数</h3>
 
-      {/* 尺寸选择 */}
+      {/* 分辨率 */}
+      <div className="space-y-2">
+        <Label>分辨率</Label>
+        <div className="grid grid-cols-3 gap-2">
+          {RESOLUTIONS.map((r) => (
+            <Button
+              key={r.value}
+              type="button"
+              variant={resolution === r.value ? 'default' : 'outline'}
+              size="sm"
+              className="w-full"
+              disabled={disabled}
+              onClick={() => applySize(r.value, aspect)}
+            >
+              {r.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      {/* 比例选择（尺寸随分辨率缩放） */}
       <div className="space-y-2">
         <Label>图片尺寸</Label>
         <Select
-          value={currentSizeLabel}
-          onValueChange={handleSizeChange}
+          value={aspect}
+          onValueChange={(value) => applySize(resolution, value)}
           disabled={disabled}
         >
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PRESET_SIZES.map((size) => (
-              <SelectItem key={size.label} value={size.label}>
-                {size.label}
+            {ASPECT_RATIOS.map((a) => (
+              <SelectItem key={a.ratio} value={a.ratio}>
+                {a.ratio} ({a.width * multiplier}×{a.height * multiplier})
               </SelectItem>
             ))}
           </SelectContent>
@@ -78,46 +124,84 @@ export function ParameterPanel({
 
       {/* 生成数量 */}
       <div className="space-y-2">
-        <Label>生成数量: {params.samples}</Label>
-        <Slider
-          value={[params.samples]}
-          onValueChange={([value]) => onChange({ ...params, samples: value })}
+        <Label>生成数量</Label>
+        <Input
+          type="number"
           min={1}
           max={4}
           step={1}
+          value={params.samples}
+          onChange={(e) => {
+            const v = parseInt(e.target.value, 10);
+            onChange({ ...params, samples: Number.isNaN(v) ? 1 : v });
+          }}
+          onBlur={() =>
+            onChange({ ...params, samples: clamp(params.samples || 1, 1, 4) })
+          }
           disabled={disabled}
         />
+        <p className="text-xs text-muted-foreground">
+          每次生成 1-4 张图片
+        </p>
       </div>
 
       {/* 采样步数 */}
       <div className="space-y-2">
-        <Label>采样步数: {params.steps || 20}</Label>
-        <Slider
-          value={[params.steps || 20]}
-          onValueChange={([value]) => onChange({ ...params, steps: value })}
+        <Label>采样步数</Label>
+        <Input
+          type="number"
           min={10}
           max={50}
-          step={5}
+          step={1}
+          value={params.steps ?? ''}
+          placeholder="默认 20"
+          onChange={(e) => {
+            const v = parseInt(e.target.value, 10);
+            onChange({ ...params, steps: Number.isNaN(v) ? undefined : v });
+          }}
+          onBlur={() =>
+            onChange({
+              ...params,
+              steps:
+                params.steps === undefined
+                  ? 20
+                  : clamp(params.steps, 10, 50),
+            })
+          }
           disabled={disabled}
         />
         <p className="text-xs text-muted-foreground">
-          步数越多，质量越好，但生成时间越长
+          步数越多，质量越好，但生成时间越长（10-50）
         </p>
       </div>
 
       {/* CFG Scale */}
       <div className="space-y-2">
-        <Label>提示词相关度: {params.cfgScale || 7}</Label>
-        <Slider
-          value={[params.cfgScale || 7]}
-          onValueChange={([value]) => onChange({ ...params, cfgScale: value })}
+        <Label>提示词相关度</Label>
+        <Input
+          type="number"
           min={1}
           max={20}
           step={0.5}
+          value={params.cfgScale ?? ''}
+          placeholder="默认 7"
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            onChange({ ...params, cfgScale: Number.isNaN(v) ? undefined : v });
+          }}
+          onBlur={() =>
+            onChange({
+              ...params,
+              cfgScale:
+                params.cfgScale === undefined
+                  ? 7
+                  : clamp(params.cfgScale, 1, 20),
+            })
+          }
           disabled={disabled}
         />
         <p className="text-xs text-muted-foreground">
-          值越高，越严格遵循提示词
+          值越高，越严格遵循提示词（1-20）
         </p>
       </div>
 
