@@ -147,6 +147,7 @@ export default function ImageToImagePage() {
               onPromptChange={setPrompt}
               onNegativePromptChange={setNegativePrompt}
               disabled={generating}
+              referenceImage={sourceImage || undefined}
             />
             <p className="text-sm text-muted-foreground">
               描述你想要的变化方向，留空则生成相似变体

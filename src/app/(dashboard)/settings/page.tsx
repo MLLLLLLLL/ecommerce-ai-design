@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useConfigStore } from '@/stores/useConfigStore';
+import { useTextModelStore } from '@/stores/useTextModelStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,11 +31,75 @@ import { AIServiceConfig } from '@/types/ai';
 export default function SettingsPage() {
     const { services, addService, updateService, deleteService } =
     useConfigStore();
+  const { setTextModel } = useTextModelStore();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingService, setEditingService] = useState<AIServiceConfig | null>(
     null
   );
   const [testingId, setTestingId] = useState<string | null>(null);
+
+  // 文本模型表单
+  // zustand persist 对 localStorage 同步恢复，客户端首次渲染前已 hydrate，
+  // 惰性初始化直接从 store 读取（apiKey解密后展示），避免用 effect 回填
+  const [textForm, setTextForm] = useState(() => {
+    if (typeof window === 'undefined') {
+      return { baseURL: '', apiKey: '', model: '' };
+    }
+    const decrypted = useTextModelStore.getState().getTextModel();
+    return {
+      baseURL: decrypted?.baseURL || '',
+      apiKey: decrypted?.apiKey || '',
+      model: decrypted?.model || '',
+    };
+  });
+  const [textTesting, setTextTesting] = useState(false);
+
+  const handleSaveTextModel = () => {
+    if (
+      !textForm.baseURL.trim() ||
+      !textForm.apiKey.trim() ||
+      !textForm.model.trim()
+    ) {
+      toast.error('请填写完整的文本模型配置');
+      return;
+    }
+
+    setTextModel(textForm);
+    toast.success('文本模型配置已保存');
+  };
+
+  const handleTestTextModel = async () => {
+    if (
+      !textForm.baseURL.trim() ||
+      !textForm.apiKey.trim() ||
+      !textForm.model.trim()
+    ) {
+      toast.error('请填写完整的文本模型配置');
+      return;
+    }
+
+    setTextTesting(true);
+    try {
+      const response = await fetch('/api/ai/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'text', ...textForm }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        toast.success('连接成功！');
+      } else {
+        toast.error(data.error || '连接失败');
+      }
+    } catch (error) {
+      console.error('Text model test error:', error);
+      toast.error('连接测试失败');
+    } finally {
+      setTextTesting(false);
+    }
+  };
 
   const [formData, setFormData] = useState({
     provider: 'openai' as 'openai' | 'alibaba' | 'relay',
@@ -157,6 +222,7 @@ export default function SettingsPage() {
       <Tabs defaultValue="services">
         <TabsList>
           <TabsTrigger value="services">AI 服务</TabsTrigger>
+          <TabsTrigger value="text-model">文本模型</TabsTrigger>
           <TabsTrigger value="preferences">偏好设置</TabsTrigger>
         </TabsList>
 
@@ -260,6 +326,74 @@ export default function SettingsPage() {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="text-model" className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            配置用于「提示词优化」的文本大模型（OpenAI 兼容接口）
+          </p>
+          <Card>
+            <CardHeader>
+              <CardTitle>提示词优化模型</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Base URL</Label>
+                <Input
+                  placeholder="https://api.openai.com/v1"
+                  value={textForm.baseURL}
+                  onChange={(e) =>
+                    setTextForm({ ...textForm, baseURL: e.target.value })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  OpenAI 兼容接口地址，支持通义、DeepSeek、中转站等
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>API Key</Label>
+                <Input
+                  type="password"
+                  placeholder="sk-..."
+                  value={textForm.apiKey}
+                  onChange={(e) =>
+                    setTextForm({ ...textForm, apiKey: e.target.value })
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>模型名</Label>
+                <Input
+                  placeholder="例如：gpt-4o、qwen-vl-max（图生图优化建议使用支持视觉的模型）"
+                  value={textForm.model}
+                  onChange={(e) =>
+                    setTextForm({ ...textForm, model: e.target.value })
+                  }
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={handleTestTextModel}
+                  disabled={textTesting}
+                >
+                  {textTesting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      测试中...
+                    </>
+                  ) : (
+                    '测试连接'
+                  )}
+                </Button>
+                <Button onClick={handleSaveTextModel}>保存</Button>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="preferences">

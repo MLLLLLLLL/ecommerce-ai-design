@@ -2,6 +2,12 @@
 
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
+import { PromptOptimizeDialog } from '@/components/shared/PromptOptimizeDialog';
+import { usePromptOptimize } from '@/hooks/usePromptOptimize';
+import { useTextModelStore } from '@/stores/useTextModelStore';
+import { Sparkles } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface PromptInputProps {
   prompt: string;
@@ -9,6 +15,8 @@ interface PromptInputProps {
   onPromptChange: (value: string) => void;
   onNegativePromptChange: (value: string) => void;
   disabled?: boolean;
+  /** 图生图模式传入参考图（URL或dataUrl），优化时一并发给文本模型 */
+  referenceImage?: string;
 }
 
 export function PromptInput({
@@ -17,11 +25,69 @@ export function PromptInput({
   onPromptChange,
   onNegativePromptChange,
   disabled = false,
+  referenceImage,
 }: PromptInputProps) {
+  const getTextModel = useTextModelStore((s) => s.getTextModel);
+  const {
+    dialogOpen,
+    setDialogOpen,
+    optimizing,
+    optimizedText,
+    originalPrompt,
+    error: optimizeError,
+    optimize,
+    accept,
+    cancel,
+  } = usePromptOptimize();
+
+  /**
+   * 点击优化提示词按钮
+   * 未配置文本模型时提示去设置页配置
+   */
+  const handleOptimize = () => {
+    if (!prompt.trim()) return;
+
+    const config = getTextModel();
+    if (!config) {
+      toast.error('请先在设置页的「文本模型」标签中配置提示词优化模型');
+      return;
+    }
+
+    void optimize(
+      config,
+      prompt.trim(),
+      referenceImage ? 'image-to-image' : 'text-to-image',
+      referenceImage || undefined
+    );
+  };
+
+  /**
+   * 接受优化结果，回填到提示词输入框
+   */
+  const handleAccept = () => {
+    const text = accept();
+    if (text) {
+      onPromptChange(text);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="prompt">提示词</Label>
+        <div className="flex items-center justify-between">
+          <Label htmlFor="prompt">提示词</Label>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-2 text-xs text-muted-foreground"
+            onClick={handleOptimize}
+            disabled={disabled || !prompt.trim()}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            优化提示词
+          </Button>
+        </div>
         <Textarea
           id="prompt"
           placeholder="描述你想要生成的图片，例如：一只可爱的橘猫坐在窗台上，阳光洒进来..."
@@ -49,6 +115,18 @@ export function PromptInput({
           {negativePrompt.length} 字符
         </p>
       </div>
+
+      {/* 提示词优化对比弹窗 */}
+      <PromptOptimizeDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        originalPrompt={originalPrompt}
+        optimizedPrompt={optimizedText}
+        loading={optimizing}
+        error={optimizeError}
+        onAccept={handleAccept}
+        onCancel={cancel}
+      />
     </div>
   );
 }
