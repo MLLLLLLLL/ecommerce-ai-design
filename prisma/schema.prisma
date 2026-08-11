@@ -1,0 +1,177 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// 用户模型
+// ============================================
+
+model User {
+  id            String    @id @default(uuid())
+  email         String?   @unique
+  name          String    @default("本地用户")
+  
+  configs       Config[]
+  assets        Asset[]
+  folders       Folder[]
+  projects      Project[]
+  workflows     WorkflowTemplate[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([email])
+}
+
+// ============================================
+// 配置管理
+// ============================================
+
+model Config {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type          String
+  provider      String?
+  apiKey        String?
+  baseURL       String?
+  model         String?
+  relayType     String?
+  
+  maxConcurrent Int?      @default(50)
+  
+  preferences   Json?
+  isActive      Boolean   @default(true)
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@unique([userId, type, provider])
+  @@index([userId, type])
+}
+
+// ============================================
+// 资源库
+// ============================================
+
+model Asset {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  filename        String
+  filepath        String    @unique
+  thumbnail       String?
+  filesize        Int
+  
+  width           Int?
+  height          Int?
+  format          String
+  
+  prompt          String?   @db.Text
+  negativePrompt  String?   @db.Text
+  aiModel         String?
+  aiProvider      String?
+  parameters      Json?
+  
+  folderId        String?
+  folder          Folder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  tags            Tag[]
+  
+  source          String
+  projectId       String?
+  project         Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([userId, createdAt])
+  @@index([folderId])
+  @@index([source])
+}
+
+model Folder {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  name        String
+  description String?
+  color       String?
+  
+  parentId    String?
+  parent      Folder?   @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children    Folder[]  @relation("FolderHierarchy")
+  
+  assets      Asset[]
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@unique([userId, parentId, name])
+  @@index([userId, parentId])
+}
+
+model Tag {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  color       String?
+  description String?
+  
+  assets      Asset[]
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@index([name])
+}
+
+// ============================================
+// 项目管理
+// ============================================
+
+model Project {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  name        String
+  description String?   @db.Text
+  
+  assets      Asset[]
+  workflows   WorkflowTemplate[]
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@index([userId])
+}
+
+// ============================================
+// 工作流系统
+// ============================================
+
+model WorkflowTemplate {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  name        String
+  description String?   @db.Text
+  
+  definition  Json
+  
+  projectId   String?
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@index([userId])
+}
