@@ -1,4 +1,4 @@
-import { WorkflowNode, NodeType, ExecutionContext } from './base';
+import { WorkflowNode, NodeType, ExecutionContext, NodeConfigSchema } from './base';
 
 // 条件判断节点
 export class ConditionNode extends WorkflowNode {
@@ -7,6 +7,8 @@ export class ConditionNode extends WorkflowNode {
   description = '根据条件分支';
   inputs: string[] = ['value'];
   outputs: string[] = ['true', 'false'];
+  // 条件节点透传任意类型数据
+  portTypes = { value: 'any' as const, true: 'any' as const, false: 'any' as const };
 
   async validate(context: ExecutionContext): Promise<boolean> {
     return context.inputs.value !== undefined;
@@ -43,10 +45,10 @@ export class ConditionNode extends WorkflowNode {
     return result ? { true: value } : { false: value };
   }
 
-  getConfigSchema(): Record<string, any> {
+  getConfigSchema(): NodeConfigSchema {
     return {
       operator: {
-        type: 'select',
+        type: 'combo',
         label: '运算符',
         options: ['==', '!=', '>', '<', '>=', '<='],
         default: '==',
@@ -55,6 +57,7 @@ export class ConditionNode extends WorkflowNode {
         type: 'string',
         label: '比较值',
         default: '',
+        required: true,
       },
     };
   }

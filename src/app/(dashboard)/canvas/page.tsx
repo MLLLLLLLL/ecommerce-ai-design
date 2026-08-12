@@ -7,8 +7,9 @@ import { CanvasToolbar } from '@/components/canvas/CanvasToolbar';
 import { LayersPanel } from '@/components/canvas/LayersPanel';
 import { PropertiesPanel } from '@/components/canvas/PropertiesPanel';
 import { Button } from '@/components/ui/button';
-import { Download, Save, Upload } from 'lucide-react';
+import { Download, Save, Upload, Send } from 'lucide-react';
 import { toast } from 'sonner';
+import { useWorkflowBridge } from '@/stores/workflowBridge';
 
 export default function CanvasPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -58,6 +59,34 @@ export default function CanvasPage() {
       manager.dispose();
     };
   }, []);
+
+  // 消费工作流送入画布的图片队列（借鉴 InvokeAI Unified Canvas 的生成结果流转）
+  useEffect(() => {
+    if (!canvasManager) return;
+
+    const images = useWorkflowBridge.getState().popCanvasImages();
+    if (images.length === 0) return;
+
+    images.forEach((url, index) => {
+      canvasManager.addImage(url, {
+        left: 100 + index * 40,
+        top: 100 + index * 40,
+      });
+    });
+
+    toast.success(`已接收 ${images.length} 张工作流生成图片`);
+  }, [canvasManager]);
+
+  // 画布导出并回传工作流，作为图片输入节点的数据源
+  const handleSendToWorkflow = () => {
+    if (!canvasManager) return;
+
+    const dataUrl = canvasManager.exportToImage('png', 1.0);
+    if (!dataUrl) return;
+
+    useWorkflowBridge.getState().sendToWorkflow(dataUrl);
+    toast.success('已发送到工作流页面，打开工作流页面即可接收');
+  };
 
   const handleExport = () => {
     if (!canvasManager) return;
@@ -112,6 +141,10 @@ export default function CanvasPage() {
         <CanvasToolbar canvasManager={canvasManager} />
 
         <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={handleSendToWorkflow}>
+            <Send className="mr-2 h-4 w-4" />
+            送入工作流
+          </Button>
           <Button variant="outline" size="sm" onClick={handleLoad}>
             <Upload className="mr-2 h-4 w-4" />
             加载

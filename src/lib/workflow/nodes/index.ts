@@ -36,3 +36,4 @@ export * from './output';
 export * from './ai';
 export * from './image';
 export * from './logic';
+export * from '../portTypes';

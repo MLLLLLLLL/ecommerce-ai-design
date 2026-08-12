@@ -1,4 +1,4 @@
-import { WorkflowNode, NodeType, ExecutionContext } from './base';
+import { WorkflowNode, NodeType, ExecutionContext, NodeConfigSchema } from './base';
 
 // 文本输入节点
 export class TextInputNode extends WorkflowNode {
@@ -7,6 +7,7 @@ export class TextInputNode extends WorkflowNode {
   description = '输入文本内容';
   inputs: string[] = [];
   outputs: string[] = ['text'];
+  portTypes = { text: 'text' as const };
 
   async validate(context: ExecutionContext): Promise<boolean> {
     return true;
@@ -16,13 +17,14 @@ export class TextInputNode extends WorkflowNode {
     return context.config.text || '';
   }
 
-  getConfigSchema(): Record<string, any> {
+  getConfigSchema(): NodeConfigSchema {
     return {
       text: {
         type: 'string',
         label: '文本内容',
         default: '',
         multiline: true,
+        required: true,
       },
     };
   }
@@ -35,6 +37,7 @@ export class ImageInputNode extends WorkflowNode {
   description = '上传或选择图片';
   inputs: string[] = [];
   outputs: string[] = ['image'];
+  portTypes = { image: 'image' as const };
 
   async validate(context: ExecutionContext): Promise<boolean> {
     return !!context.config.imageUrl;
@@ -44,7 +47,7 @@ export class ImageInputNode extends WorkflowNode {
     return context.config.imageUrl;
   }
 
-  getConfigSchema(): Record<string, any> {
+  getConfigSchema(): NodeConfigSchema {
     return {
       imageUrl: {
         type: 'image',
@@ -62,6 +65,7 @@ export class ParameterInputNode extends WorkflowNode {
   description = '输入数值参数';
   inputs: string[] = [];
   outputs: string[] = ['value'];
+  portTypes = { value: 'number' as const };
 
   async validate(context: ExecutionContext): Promise<boolean> {
     return context.config.value !== undefined;
@@ -71,12 +75,13 @@ export class ParameterInputNode extends WorkflowNode {
     return context.config.value;
   }
 
-  getConfigSchema(): Record<string, any> {
+  getConfigSchema(): NodeConfigSchema {
     return {
       value: {
-        type: 'number',
+        type: 'float',
         label: '数值',
         default: 0,
+        required: true,
       },
     };
   }

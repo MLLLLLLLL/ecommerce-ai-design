@@ -21,6 +21,98 @@ export type NodeType =
   | 'branch'
   | 'output';
 
+// 端口数据类型（借鉴 InvokeAI 的类型化连线约束）
+export type PortType = 'text' | 'image' | 'number' | 'boolean' | 'any';
+
+// ============================================
+// 声明式节点配置字段 schema（借鉴 InvokeAI invocation field 元数据）
+// ============================================
+
+interface NodeFieldBase {
+  label: string;
+  description?: string;
+  required?: boolean;
+}
+
+// 整数（对应 InvokeAI IntegerFieldInput）
+export interface IntegerFieldSchema extends NodeFieldBase {
+  type: 'integer';
+  default?: number;
+  min?: number;
+  max?: number;
+}
+
+// 浮点数（对应 InvokeAI FloatFieldInput）
+export interface FloatFieldSchema extends NodeFieldBase {
+  type: 'float';
+  default?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+// 字符串（对应 InvokeAI StringFieldInput，支持多行）
+export interface StringFieldSchema extends NodeFieldBase {
+  type: 'string';
+  default?: string;
+  multiline?: boolean;
+}
+
+// 布尔开关（对应 InvokeAI BooleanFieldInput）
+export interface BooleanFieldSchema extends NodeFieldBase {
+  type: 'boolean';
+  default?: boolean;
+}
+
+// 枚举下拉（对应 InvokeAI combo/choices）
+export interface ComboFieldSchema extends NodeFieldBase {
+  type: 'combo';
+  default?: string;
+  options: string[];
+}
+
+// 随机种子（带随机/固定切换，-1 表示随机）
+export interface SeedFieldSchema extends NodeFieldBase {
+  type: 'seed';
+  default?: number;
+}
+
+// 图片输入（URL 或 base64）
+export interface ImageFieldSchema extends NodeFieldBase {
+  type: 'image';
+}
+
+// AI 服务选择（存储 serviceId，执行时经 useConfigStore 解析为完整配置）
+export interface ServiceFieldSchema extends NodeFieldBase {
+  type: 'service';
+}
+
+export type NodeFieldSchema =
+  | IntegerFieldSchema
+  | FloatFieldSchema
+  | StringFieldSchema
+  | BooleanFieldSchema
+  | ComboFieldSchema
+  | SeedFieldSchema
+  | ImageFieldSchema
+  | ServiceFieldSchema;
+
+// 节点配置 schema：字段名 → 字段定义
+export type NodeConfigSchema = Record<string, NodeFieldSchema>;
+
+// 根据 schema 提取默认配置值
+export function getDefaultConfig(schema: NodeConfigSchema): Record<string, any> {
+  const config: Record<string, any> = {};
+  Object.entries(schema).forEach(([key, field]) => {
+    if ('default' in field && field.default !== undefined) {
+      config[key] = field.default;
+    } else if (field.type === 'seed') {
+      config[key] = -1; // 默认随机
+    }
+  });
+  return config;
+}
+
 // 节点数据接口
 export interface NodeData {
   label: string;
@@ -49,6 +141,9 @@ export abstract class WorkflowNode {
   abstract inputs: string[];
   abstract outputs: string[];
 
+  // 端口类型映射（键为 inputs/outputs 中的端口名），未声明的端口视为 'any'
+  portTypes: Record<string, PortType> = {};
+
   // 验证输入
   abstract validate(context: ExecutionContext): Promise<boolean>;
 
@@ -56,7 +151,12 @@ export abstract class WorkflowNode {
   abstract execute(context: ExecutionContext): Promise<any>;
 
   // 获取节点配置 schema
-  abstract getConfigSchema(): Record<string, any>;
+  abstract getConfigSchema(): NodeConfigSchema;
+
+  // 获取指定端口的类型
+  getPortType(port: string): PortType {
+    return this.portTypes[port] || 'any';
+  }
 }
 
 // 节点注册表

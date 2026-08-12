@@ -90,11 +90,26 @@ export class WorkflowEngine {
       if (sourceResult !== undefined) {
         // 从边的 targetHandle 获取输入键名
         const inputKey = edge.targetHandle || 'input';
-        inputs[inputKey] = sourceResult;
+        inputs[inputKey] = this.extractOutput(sourceResult, edge.sourceHandle);
       }
     });
 
     return inputs;
+  }
+
+  // 提取源节点的指定输出
+  // 分支类节点（如条件节点）结果为 { true: v } / { false: v }，按 sourceHandle 取对应分支
+  private extractOutput(result: any, sourceHandle: string | null | undefined): any {
+    if (
+      sourceHandle &&
+      result !== null &&
+      typeof result === 'object' &&
+      !Array.isArray(result) &&
+      sourceHandle in result
+    ) {
+      return result[sourceHandle];
+    }
+    return result;
   }
 
   // 更新节点状态

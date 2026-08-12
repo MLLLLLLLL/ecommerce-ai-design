@@ -31,7 +31,7 @@ interface ParameterPanelProps {
 }
 
 // 1K 分辨率下各比例的基础尺寸
-const ASPECT_RATIOS = [
+export const ASPECT_RATIOS = [
   { ratio: '1:1', width: 1024, height: 1024 },
   { ratio: '16:9', width: 1344, height: 768 },
   { ratio: '9:16', width: 768, height: 1344 },
@@ -39,7 +39,7 @@ const ASPECT_RATIOS = [
   { ratio: '3:4', width: 896, height: 1152 },
 ];
 
-const RESOLUTIONS: {
+export const RESOLUTIONS: {
   value: Resolution;
   label: string;
   multiplier: number;
@@ -48,6 +48,13 @@ const RESOLUTIONS: {
   { value: '2k', label: '2K', multiplier: 2 },
   { value: '4k', label: '4K', multiplier: 4 },
 ];
+
+// 根据分辨率+比例计算最终宽高
+export function computeSize(resolution: Resolution, aspect: string) {
+  const mult = RESOLUTIONS.find((r) => r.value === resolution)?.multiplier ?? 1;
+  const ratio = ASPECT_RATIOS.find((a) => a.ratio === aspect) || ASPECT_RATIOS[0];
+  return { width: ratio.width * mult, height: ratio.height * mult };
+}
 
 const clamp = (v: number, min: number, max: number) =>
   Math.min(max, Math.max(min, v));

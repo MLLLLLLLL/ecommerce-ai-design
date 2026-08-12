@@ -1,4 +1,4 @@
-import { WorkflowNode, NodeType, ExecutionContext } from './base';
+import { WorkflowNode, NodeType, ExecutionContext, NodeConfigSchema } from './base';
 
 // 输出节点
 export class OutputNode extends WorkflowNode {
@@ -7,6 +7,7 @@ export class OutputNode extends WorkflowNode {
   description = '保存结果到资源库';
   inputs: string[] = ['image'];
   outputs: string[] = [];
+  portTypes = { image: 'image' as const };
 
   async validate(context: ExecutionContext): Promise<boolean> {
     return !!context.inputs.image;
@@ -25,7 +26,7 @@ export class OutputNode extends WorkflowNode {
     };
   }
 
-  getConfigSchema(): Record<string, any> {
+  getConfigSchema(): NodeConfigSchema {
     return {
       autoSave: {
         type: 'boolean',
@@ -35,7 +36,7 @@ export class OutputNode extends WorkflowNode {
       folderId: {
         type: 'string',
         label: '保存到文件夹',
-        optional: true,
+        description: '可选，留空保存到默认位置',
       },
     };
   }
