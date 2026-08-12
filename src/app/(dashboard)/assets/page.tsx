@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Search, Download, Trash2, Eye, FolderOpen } from 'lucide-react';
+import { Search, Download, Trash2, Eye, FolderOpen, FileText } from 'lucide-react';
 import Image from 'next/image';
 import { toast } from 'sonner';
 import { getAssetUrl } from '@/lib/utils';
@@ -22,6 +22,7 @@ interface Asset {
   filename: string;
   filepath: string;
   thumbnail?: string;
+  format: string;
   width?: number;
   height?: number;
   prompt?: string;
@@ -53,11 +54,11 @@ export default function AssetsPage() {
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
 
-  const loadAssets = async () => {
+  const loadAssets = async (pageOverride?: number) => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
-        page: pagination.page.toString(),
+        page: (pageOverride || pagination.page).toString(),
         pageSize: pagination.pageSize.toString(),
       });
 
@@ -91,7 +92,7 @@ export default function AssetsPage() {
 
   const handleSearch = () => {
     setPagination({ ...pagination, page: 1 });
-    loadAssets();
+    loadAssets(1);
   };
 
   const handleDelete = async (id: string) => {
@@ -163,6 +164,7 @@ export default function AssetsPage() {
             <SelectItem value="image-to-image">图生图</SelectItem>
             <SelectItem value="canvas">画布</SelectItem>
             <SelectItem value="workflow">工作流</SelectItem>
+            <SelectItem value="marketing-assistant">营销助手</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -191,12 +193,19 @@ export default function AssetsPage() {
           {assets.map((asset) => (
             <Card key={asset.id} className="overflow-hidden">
               <div className="relative aspect-square w-full overflow-hidden bg-muted">
-                <Image
-                  src={getAssetUrl(asset.thumbnail || asset.filepath)}
-                  alt={asset.filename}
-                  fill
-                  className="object-cover"
-                />
+                {['png', 'jpg', 'jpeg', 'webp', 'gif'].includes((asset.format || '').toLowerCase()) ? (
+                  <Image
+                    src={getAssetUrl(asset.thumbnail || asset.filepath)}
+                    alt={asset.filename}
+                    fill
+                    className="object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground">
+                    <FileText className="h-12 w-12" />
+                    <span className="line-clamp-3 text-sm">{asset.filename}</span>
+                  </div>
+                )}
                 <div className="absolute right-2 top-2">
                   <Badge variant="secondary" className="text-xs">
                     {asset.source}
@@ -228,7 +237,7 @@ export default function AssetsPage() {
                     variant="outline"
                     size="sm"
                     className="flex-1"
-                    onClick={() => window.open(asset.filepath, '_blank')}
+                    onClick={() => window.open(getAssetUrl(asset.filepath), '_blank')}
                   >
                     <Eye className="h-3 w-3" />
                   </Button>

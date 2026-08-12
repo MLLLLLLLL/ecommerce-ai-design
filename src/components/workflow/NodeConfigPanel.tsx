@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Node } from 'reactflow';
 import { Shuffle, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
@@ -28,7 +28,7 @@ import {
 import { ImageUploader } from '@/components/image-to-image/ImageUploader';
 import { PromptOptimizeDialog } from '@/components/shared/PromptOptimizeDialog';
 import { usePromptOptimize } from '@/hooks/usePromptOptimize';
-import { useTextModelStore } from '@/stores/useTextModelStore';
+import type { ModelConfigSummary } from '@/types/model-config';
 import {
   ASPECT_RATIOS,
   RESOLUTIONS,
@@ -179,7 +179,7 @@ function OptimizePromptButton({
   getText: () => string;
   onAccept: (text: string) => void;
 }) {
-  const getTextModel = useTextModelStore((s) => s.getTextModel);
+  const [modelId, setModelId] = useState<string | null>(null);
   const {
     dialogOpen,
     setDialogOpen,
@@ -196,14 +196,29 @@ function OptimizePromptButton({
     const prompt = getText();
     if (!prompt.trim()) return;
 
-    const config = getTextModel();
-    if (!config) {
+    if (!modelId) {
       toast.error('请先在设置页的「文本模型」标签中配置提示词优化模型');
       return;
     }
 
-    void optimize(config, prompt.trim(), 'text-to-image');
+    void optimize(modelId, prompt.trim(), 'text-to-image');
   };
+
+  useEffect(() => {
+    const loadDefaultModel = async () => {
+      try {
+        const response = await fetch('/api/model-configs');
+        const data = await response.json();
+        const models = data.models as ModelConfigSummary[] | undefined;
+        const model = models?.find((item) => item.isActive && item.isDefault && item.capabilities.jsonMode)
+          || models?.find((item) => item.isActive && item.capabilities.jsonMode);
+        setModelId(model?.id || null);
+      } catch {
+        setModelId(null);
+      }
+    };
+    void loadDefaultModel();
+  }, []);
 
   const handleAccept = () => {
     const text = accept();

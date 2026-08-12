@@ -151,7 +151,9 @@ export class WorkflowEngine {
       // 验证输入
       const isValid = await nodeImpl.validate(context);
       if (!isValid) {
-        throw new Error('Node validation failed');
+        throw new Error(
+          nodeImpl.getValidationError(context) || '节点校验失败，请检查输入和配置'
+        );
       }
 
       // 执行节点

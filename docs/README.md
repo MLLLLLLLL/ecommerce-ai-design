@@ -48,6 +48,13 @@
 - 完整适配器实现代码
 - 配置示例和错误处理
 
+#### 6. [toapi_async_integration.md](./toapi_async_integration.md) - ToAPI 异步任务模式集成文档
+ToAPI（toapis.com）异步任务模式接入说明：
+- 异步任务模型与轮询机制详解
+- 像素尺寸 → 比例/分辨率转换规则
+- 适配器实现代码（`src/lib/ai/adapters/relay.ts`）
+- 配置指南、验证方法与限制说明
+
 #### 6. [config_hot_reload_high_concurrency.md](./config_hot_reload_high_concurrency.md) - 配置热更新与高并发
 生产级高性能特性设计：
 - **配置热更新**：无需重启，配置立即生效

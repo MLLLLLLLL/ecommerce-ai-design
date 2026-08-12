@@ -13,6 +13,10 @@ export class OutputNode extends WorkflowNode {
     return !!context.inputs.image;
   }
 
+  getValidationError(context: ExecutionContext): string | null {
+    return context.inputs.image ? null : '输出节点缺少图片输入（请确认上游节点执行成功）';
+  }
+
   async execute(context: ExecutionContext): Promise<any> {
     const imageUrl = context.inputs.image;
 

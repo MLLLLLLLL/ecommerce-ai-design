@@ -10,6 +10,7 @@ import {
   Workflow,
   FolderOpen,
   Settings,
+  Sparkles,
 } from 'lucide-react';
 
 const navigation = [
@@ -17,6 +18,7 @@ const navigation = [
   { name: '图生图', href: '/image-to-image', icon: Images },
   { name: '无限画布', href: '/canvas', icon: Layout },
   { name: '工作流', href: '/workflow', icon: Workflow },
+  { name: '营销助手', href: '/marketing', icon: Sparkles },
   { name: '资源库', href: '/assets', icon: FolderOpen },
   { name: '设置', href: '/settings', icon: Settings },
 ];

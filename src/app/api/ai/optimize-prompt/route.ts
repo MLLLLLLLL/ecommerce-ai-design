@@ -1,5 +1,7 @@
 import { NextRequest } from 'next/server';
-import { decryptApiKey } from '@/lib/security/encryption';
+import { z } from 'zod';
+import { getCurrentUser } from '@/lib/auth/current-user';
+import { resolveTextModelForPurpose } from '@/lib/model-configs';
 
 // 提示词优化模式
 type OptimizeMode = 'text-to-image' | 'image-to-image';
@@ -35,52 +37,21 @@ const SYSTEM_PROMPTS: Record<OptimizeMode, string> = {
 只输出优化后的提示词本身，不要输出任何解释、前缀或额外说明。`,
 };
 
-/**
- * 解密前端传来的API Key
- * 解密失败则按明文原文处理
- */
-function resolveApiKey(raw: string): string {
-  try {
-    return decryptApiKey(raw);
-  } catch {
-    return raw;
-  }
-}
+const requestSchema = z.object({
+  modelId: z.string().uuid(),
+  prompt: z.string().trim().min(1),
+  mode: z.enum(['text-to-image', 'image-to-image']),
+  image: z.string().optional(),
+}).strict();
 
 // POST /api/ai/optimize-prompt - 调用文本模型流式优化提示词
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { config, prompt, mode, image } = body as {
-      config?: { baseURL?: string; apiKey?: string; model?: string };
-      prompt?: string;
-      mode?: OptimizeMode;
-      image?: string;
-    };
-
-    if (!prompt || !prompt.trim()) {
-      return Response.json(
-        { success: false, error: '提示词不能为空' },
-        { status: 400 }
-      );
-    }
-
-    if (!config?.baseURL || !config?.apiKey || !config?.model) {
-      return Response.json(
-        { success: false, error: '缺少文本模型配置（baseURL / apiKey / model）' },
-        { status: 400 }
-      );
-    }
-
-    if (!mode || !SYSTEM_PROMPTS[mode]) {
-      return Response.json(
-        { success: false, error: '无效的优化模式' },
-        { status: 400 }
-      );
-    }
-
-    const baseURL = config.baseURL.trim().replace(/\/+$/, '');
-    const apiKey = resolveApiKey(config.apiKey);
+    const { modelId, prompt, mode, image } = requestSchema.parse(await req.json());
+    const user = await getCurrentUser();
+    const purpose = mode === 'image-to-image' && image ? 'vision' : 'content';
+    const { runtimeConfig } = await resolveTextModelForPurpose(user.id, modelId, purpose);
+    const baseURL = runtimeConfig.baseURL!.replace(/\/+$/, '');
 
     // 组装消息内容：图生图模式附带参考图（多模态）
     let content: string | ContentPart[] = `用户输入：\n${prompt.trim()}`;
@@ -94,11 +65,11 @@ export async function POST(req: NextRequest) {
     const upstream = await fetch(`${baseURL}/chat/completions`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${runtimeConfig.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: config.model.trim(),
+        model: runtimeConfig.model,
         stream: true,
         messages: [
           { role: 'system', content: SYSTEM_PROMPTS[mode] },
@@ -146,7 +117,7 @@ export async function POST(req: NextRequest) {
         success: false,
         error: error instanceof Error ? error.message : '提示词优化失败',
       },
-      { status: 500 }
+      { status: error instanceof z.ZodError ? 400 : 500 }
     );
   }
 }

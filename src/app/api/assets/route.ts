@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
+import { getCurrentUser } from '@/lib/auth/current-user';
 
 // GET /api/assets - 获取资源列表
 export async function GET(req: NextRequest) {
@@ -11,8 +12,9 @@ export async function GET(req: NextRequest) {
     const source = searchParams.get('source');
     const search = searchParams.get('search');
 
-    // 构建查询条件
-    const where: any = {};
+    // 构建查询条件，仅返回当前用户的素材
+    const user = await getCurrentUser();
+    const where: any = { userId: user.id };
 
     if (folderId) {
       where.folderId = folderId;
@@ -66,14 +68,7 @@ export async function GET(req: NextRequest) {
 // POST /api/assets - 创建资源（预留）
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-
-    // TODO: 实现资源创建逻辑
-
-    return NextResponse.json({
-      success: true,
-      message: 'Not implemented yet',
-    });
+    return NextResponse.json({ success: false, error: '请使用具体素材导入接口' }, { status: 405 });
   } catch (error: any) {
     return NextResponse.json(
       { success: false, error: error.message },

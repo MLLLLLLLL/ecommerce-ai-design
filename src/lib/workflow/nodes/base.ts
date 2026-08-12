@@ -147,6 +147,11 @@ export abstract class WorkflowNode {
   // 验证输入
   abstract validate(context: ExecutionContext): Promise<boolean>;
 
+  // 可选的可读校验错误，供工作流界面回显具体缺失项
+  getValidationError(_context: ExecutionContext): string | null {
+    return null;
+  }
+
   // 执行节点
   abstract execute(context: ExecutionContext): Promise<any>;
 

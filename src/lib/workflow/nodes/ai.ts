@@ -37,6 +37,12 @@ export class TextToImageNode extends WorkflowNode {
     return !!context.inputs.prompt && !!context.config.serviceConfig;
   }
 
+  getValidationError(context: ExecutionContext): string | null {
+    if (!context.inputs.prompt) return '文生图缺少提示词输入';
+    if (!context.config.serviceConfig) return '文生图未配置 AI 服务，请在设置中添加并激活服务';
+    return null;
+  }
+
   async execute(context: ExecutionContext): Promise<any> {
     // seed 为 -1 时随机生成
     const seed =
@@ -132,6 +138,12 @@ export class ImageToImageNode extends WorkflowNode {
 
   async validate(context: ExecutionContext): Promise<boolean> {
     return !!context.inputs.image && !!context.config.serviceConfig;
+  }
+
+  getValidationError(context: ExecutionContext): string | null {
+    if (!context.inputs.image) return '图生图缺少图片输入';
+    if (!context.config.serviceConfig) return '图生图未配置 AI 服务，请在设置中添加并激活服务';
+    return null;
   }
 
   async execute(context: ExecutionContext): Promise<any> {

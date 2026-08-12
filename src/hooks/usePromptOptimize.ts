@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { TextModelConfig } from '@/stores/useTextModelStore';
 
 export type PromptOptimizeMode = 'text-to-image' | 'image-to-image';
 
@@ -42,14 +41,14 @@ export function usePromptOptimize() {
 
   /**
    * 发起流式优化请求
-   * @param config 文本模型配置（明文apiKey）
+   * @param modelId 服务端保存的文本模型 ID
    * @param prompt 用户原始提示词
    * @param mode 优化模式（文生图/图生图）
    * @param image 图生图模式的参考图（URL或dataUrl）
    */
   const optimize = useCallback(
     async (
-      config: TextModelConfig,
+      modelId: string,
       prompt: string,
       mode: PromptOptimizeMode,
       image?: string
@@ -78,7 +77,7 @@ export function usePromptOptimize() {
         const response = await fetch('/api/ai/optimize-prompt', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ config, prompt, mode, image }),
+          body: JSON.stringify({ modelId, prompt, mode, image }),
           signal: controller.signal,
         });
 

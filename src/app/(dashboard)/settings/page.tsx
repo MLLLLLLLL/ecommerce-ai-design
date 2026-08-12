@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useTextModelStore } from '@/stores/useTextModelStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -24,66 +25,93 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, Trash2, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { Download, Plus, Trash2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIServiceConfig } from '@/types/ai';
+import { DEFAULT_MODEL_CAPABILITIES, inferModelCapabilities, ModelCapabilities, ModelConfigSummary } from '@/types/model-config';
 
 export default function SettingsPage() {
-    const { services, addService, updateService, deleteService } =
+  const { services, addService, updateService, deleteService } =
     useConfigStore();
-  const { setTextModel } = useTextModelStore();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingService, setEditingService] = useState<AIServiceConfig | null>(
     null
   );
   const [testingId, setTestingId] = useState<string | null>(null);
 
-  // 文本模型表单
-  // zustand persist 对 localStorage 同步恢复，客户端首次渲染前已 hydrate，
-  // 惰性初始化直接从 store 读取（apiKey解密后展示），避免用 effect 回填
-  const [textForm, setTextForm] = useState(() => {
-    if (typeof window === 'undefined') {
-      return { baseURL: '', apiKey: '', model: '' };
-    }
-    const decrypted = useTextModelStore.getState().getTextModel();
-    return {
-      baseURL: decrypted?.baseURL || '',
-      apiKey: decrypted?.apiKey || '',
-      model: decrypted?.model || '',
-    };
+  const [textModels, setTextModels] = useState<ModelConfigSummary[]>([]);
+  const [textModelsLoading, setTextModelsLoading] = useState(true);
+  const [textDialogOpen, setTextDialogOpen] = useState(false);
+  const [editingTextModel, setEditingTextModel] = useState<string | null>(null);
+  const [textForm, setTextForm] = useState({
+    name: '',
+    baseURL: '',
+    apiKey: '',
+    model: '',
+    capabilities: DEFAULT_MODEL_CAPABILITIES as ModelCapabilities,
+    isActive: true,
+    isDefault: false,
   });
   const [textTesting, setTextTesting] = useState(false);
 
-  const handleSaveTextModel = () => {
+  const loadTextModels = async () => {
+    setTextModelsLoading(true);
+    try {
+      const response = await fetch('/api/model-configs');
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || '读取文本模型失败');
+      setTextModels(data.models);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '读取文本模型失败');
+    } finally {
+      setTextModelsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTextModels();
+  }, []);
+
+  const handleSaveTextModel = async () => {
     if (
+      !textForm.name.trim() ||
       !textForm.baseURL.trim() ||
-      !textForm.apiKey.trim() ||
+      (!editingTextModel && !textForm.apiKey.trim()) ||
       !textForm.model.trim()
     ) {
-      toast.error('请填写完整的文本模型配置');
+      toast.error('请填写完整的文本模型配置（含模型名称）');
       return;
     }
 
-    setTextModel(textForm);
-    toast.success('文本模型配置已保存');
+    try {
+      const response = await fetch(editingTextModel ? `/api/model-configs/${editingTextModel}` : '/api/model-configs', {
+        method: editingTextModel ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...textForm,
+          ...(editingTextModel && !textForm.apiKey.trim() ? { apiKey: undefined } : {}),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || '保存文本模型失败');
+      await loadTextModels();
+      setTextDialogOpen(false);
+      toast.success(editingTextModel ? '文本模型已更新' : '文本模型已添加');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存文本模型失败');
+    }
   };
 
-  const handleTestTextModel = async () => {
-    if (
-      !textForm.baseURL.trim() ||
-      !textForm.apiKey.trim() ||
-      !textForm.model.trim()
-    ) {
-      toast.error('请填写完整的文本模型配置');
+  const handleTestTextModel = async (modelId?: string) => {
+    if (!modelId) {
+      toast.error('请先保存模型后再测试连接');
       return;
     }
 
     setTextTesting(true);
     try {
-      const response = await fetch('/api/ai/test-connection', {
+      const response = await fetch(`/api/model-configs/${modelId}/test`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'text', ...textForm }),
       });
 
       const data = await response.json();
@@ -96,6 +124,83 @@ export default function SettingsPage() {
     } catch (error) {
       console.error('Text model test error:', error);
       toast.error('连接测试失败');
+    } finally {
+      setTextTesting(false);
+    }
+  };
+
+  const handleOpenTextDialog = (id?: string) => {
+    const model = id ? textModels.find((item) => item.id === id) : null;
+    setEditingTextModel(id || null);
+    setTextForm({
+      name: model?.name || '',
+      baseURL: model?.baseURL || '',
+      apiKey: '',
+      model: model?.model || '',
+      capabilities: model?.capabilities || DEFAULT_MODEL_CAPABILITIES,
+      isActive: model?.isActive ?? true,
+      isDefault: model?.isDefault ?? false,
+    });
+    setTextDialogOpen(true);
+  };
+
+  const handleDeleteTextModel = async (id: string) => {
+    if (confirm('确定要删除这个文本模型吗？')) {
+      try {
+        const response = await fetch(`/api/model-configs/${id}`, { method: 'DELETE' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || '删除文本模型失败');
+        await loadTextModels();
+        toast.success('文本模型已删除');
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : '删除文本模型失败');
+      }
+    }
+  };
+
+  const updateTextCapabilities = (key: keyof ModelCapabilities, value: boolean) => {
+    setTextForm((current) => ({ ...current, capabilities: { ...current.capabilities, [key]: value } }));
+  };
+
+  const handleImportLegacyTextModels = async () => {
+    const legacyStore = useTextModelStore.getState();
+    if (!legacyStore.models.length) {
+      toast.error('没有发现可导入的旧文本模型配置');
+      return;
+    }
+    if (!confirm(`将导入 ${legacyStore.models.length} 个旧文本模型到服务端。确定继续吗？`)) return;
+
+    setTextTesting(true);
+    try {
+      let imported = 0;
+      for (const legacyModel of legacyStore.models) {
+        const resolved = legacyStore.getModelById(legacyModel.id);
+        if (!resolved) continue;
+
+        const response = await fetch('/api/model-configs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: resolved.name,
+            provider: 'openai',
+            baseURL: resolved.baseURL,
+            apiKey: resolved.apiKey,
+            model: resolved.model,
+            capabilities: inferModelCapabilities(resolved.model),
+            isActive: true,
+            isDefault: legacyModel.id === legacyStore.activeModelId,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || `导入“${resolved.name}”失败`);
+        }
+        imported += 1;
+      }
+      await loadTextModels();
+      toast.success(`已导入 ${imported} 个旧文本模型`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '导入旧文本模型失败');
     } finally {
       setTextTesting(false);
     }
@@ -191,9 +296,9 @@ export default function SettingsPage() {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('确定要删除这个服务配置吗？')) {
+      if (confirm('确定要删除这个图片模型吗？')) {
       deleteService(id);
-      toast.success('服务已删除');
+      toast.success('图片模型已删除');
     }
   };
 
@@ -215,13 +320,13 @@ export default function SettingsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">设置</h1>
-          <p className="text-muted-foreground">配置 AI 服务和应用偏好</p>
+          <p className="text-muted-foreground">配置图片模型、文本模型和应用偏好</p>
         </div>
       </div>
 
       <Tabs defaultValue="services">
         <TabsList>
-          <TabsTrigger value="services">AI 服务</TabsTrigger>
+          <TabsTrigger value="services">图片模型</TabsTrigger>
           <TabsTrigger value="text-model">文本模型</TabsTrigger>
           <TabsTrigger value="preferences">偏好设置</TabsTrigger>
         </TabsList>
@@ -229,11 +334,11 @@ export default function SettingsPage() {
         <TabsContent value="services" className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              配置你的 AI 图像生成服务
+              配置用于文生图、图生图和工作流的图片模型
             </p>
             <Button onClick={() => handleOpenDialog()}>
               <Plus className="mr-2 h-4 w-4" />
-              添加服务
+              添加图片模型
             </Button>
           </div>
 
@@ -241,13 +346,13 @@ export default function SettingsPage() {
             <Card>
               <CardContent className="flex h-48 items-center justify-center">
                 <div className="text-center">
-                  <p className="text-muted-foreground">暂无配置的服务</p>
+                  <p className="text-muted-foreground">暂无配置的图片模型</p>
                   <Button
                     variant="link"
                     onClick={() => handleOpenDialog()}
                     className="mt-2"
                   >
-                    添加第一个服务
+                    添加第一个图片模型
                   </Button>
                 </div>
               </CardContent>
@@ -330,68 +435,13 @@ export default function SettingsPage() {
 
         <TabsContent value="text-model" className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            配置用于「提示词优化」的文本大模型（OpenAI 兼容接口）
+            配置提示词优化和营销助手使用的文本模型。密钥仅保存在服务端。
           </p>
           <Card>
-            <CardHeader>
-              <CardTitle>提示词优化模型</CardTitle>
-            </CardHeader>
+            <CardHeader><div className="flex items-center justify-between gap-3"><CardTitle>文本模型</CardTitle><div className="flex gap-2"><Button variant="outline" size="sm" onClick={handleImportLegacyTextModels} disabled={textTesting}><Download className="mr-2 h-4 w-4" />导入旧配置</Button><Button size="sm" onClick={() => handleOpenTextDialog()}><Plus className="mr-2 h-4 w-4" />添加文本模型</Button></div></div></CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Base URL</Label>
-                <Input
-                  placeholder="https://api.openai.com/v1"
-                  value={textForm.baseURL}
-                  onChange={(e) =>
-                    setTextForm({ ...textForm, baseURL: e.target.value })
-                  }
-                />
-                <p className="text-xs text-muted-foreground">
-                  OpenAI 兼容接口地址，支持通义、DeepSeek、中转站等
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label>API Key</Label>
-                <Input
-                  type="password"
-                  placeholder="sk-..."
-                  value={textForm.apiKey}
-                  onChange={(e) =>
-                    setTextForm({ ...textForm, apiKey: e.target.value })
-                  }
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>模型名</Label>
-                <Input
-                  placeholder="例如：gpt-4o、qwen-vl-max（图生图优化建议使用支持视觉的模型）"
-                  value={textForm.model}
-                  onChange={(e) =>
-                    setTextForm({ ...textForm, model: e.target.value })
-                  }
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={handleTestTextModel}
-                  disabled={textTesting}
-                >
-                  {textTesting ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      测试中...
-                    </>
-                  ) : (
-                    '测试连接'
-                  )}
-                </Button>
-                <Button onClick={handleSaveTextModel}>保存</Button>
-              </div>
+              <p className="text-sm text-muted-foreground">可保存多个 OpenAI 兼容文本模型，并在营销助手中按视觉识别、内容生成角色分别选择。</p>
+              {textModelsLoading ? <p className="py-8 text-center text-sm text-muted-foreground">正在加载文本模型...</p> : textModels.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">暂无配置的文本模型</p> : <div className="grid gap-4 md:grid-cols-2">{textModels.map((textModel) => <Card key={textModel.id}><CardHeader><div className="flex items-start justify-between"><div><CardTitle className="text-lg">{textModel.name}</CardTitle><div className="mt-2 flex flex-wrap gap-2">{textModel.isDefault && <Badge>默认</Badge>}<Badge variant="outline">{textModel.model}</Badge>{textModel.capabilities.vision && <Badge variant="secondary">视觉</Badge>}{textModel.capabilities.jsonMode && <Badge variant="secondary">JSON</Badge>}{!textModel.isActive && <Badge variant="destructive">已停用</Badge>}</div></div><Button variant="ghost" size="icon" aria-label={`删除 ${textModel.name}`} onClick={() => handleDeleteTextModel(textModel.id)}><Trash2 className="h-4 w-4" /></Button></div></CardHeader><CardContent className="space-y-3"><p className="truncate text-sm text-muted-foreground">{textModel.baseURL}</p><div className="flex gap-2"><Button variant="outline" size="sm" className="flex-1" onClick={() => handleTestTextModel(textModel.id)} disabled={textTesting}>{textTesting ? <><Loader2 className="mr-2 h-3 w-3 animate-spin" />测试中...</> : '测试连接'}</Button><Button variant="outline" size="sm" onClick={() => handleOpenTextDialog(textModel.id)}>编辑</Button></div></CardContent></Card>)}</div>}
             </CardContent>
           </Card>
         </TabsContent>
@@ -415,15 +465,15 @@ export default function SettingsPage() {
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>
-              {editingService ? '编辑服务' : '添加服务'}
+              {editingService ? '编辑图片模型' : '添加图片模型'}
             </DialogTitle>
             <DialogDescription>
-              配置 AI 图像生成服务的连接信息
+              配置图片模型的连接信息
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>服务提供商</Label>
+              <Label>模型提供商</Label>
               <Select
                 value={formData.provider}
                 onValueChange={(value: any) =>
@@ -442,9 +492,9 @@ export default function SettingsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>服务名称</Label>
+              <Label>图片模型名称</Label>
               <Input
-                placeholder="例如：我的 OpenAI 服务"
+                placeholder="例如：我的商品主图模型"
                 value={formData.name}
                 onChange={(e) =>
                   setFormData({ ...formData, name: e.target.value })
@@ -497,7 +547,7 @@ export default function SettingsPage() {
             )}
 
             <div className="space-y-2">
-              <Label>模型（可选）</Label>
+              <Label>模型名（可选）</Label>
               <Input
                 placeholder={
                   formData.provider === 'openai'
@@ -535,6 +585,22 @@ export default function SettingsPage() {
             </Button>
             <Button onClick={handleSave}>保存</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={textDialogOpen} onOpenChange={setTextDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader><DialogTitle>{editingTextModel ? '编辑文本模型' : '添加文本模型'}</DialogTitle><DialogDescription>配置用于提示词优化和营销助手的 OpenAI 兼容模型</DialogDescription></DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2"><Label>模型名称</Label><Input placeholder="例如：主力文本模型" value={textForm.name} onChange={(e) => setTextForm({ ...textForm, name: e.target.value })} /></div>
+            <div className="space-y-2"><Label>Base URL</Label><Input placeholder="https://api.openai.com/v1" value={textForm.baseURL} onChange={(e) => setTextForm({ ...textForm, baseURL: e.target.value })} /></div>
+            <div className="space-y-2"><Label>API Key</Label><Input type="password" placeholder={editingTextModel ? '留空则保持原密钥不变' : 'sk-...'} value={textForm.apiKey} onChange={(e) => setTextForm({ ...textForm, apiKey: e.target.value })} /></div>
+            <div className="space-y-2"><Label>模型名</Label><Input placeholder="例如：gpt-5.6-terra、qwen-vl-max" value={textForm.model} onChange={(e) => setTextForm({ ...textForm, model: e.target.value, capabilities: inferModelCapabilities(e.target.value) })} /></div>
+            <div className="space-y-3 rounded-md border p-3"><Label>模型能力</Label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.vision} onCheckedChange={(checked) => updateTextCapabilities('vision', checked === true)} />支持视觉输入</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.jsonMode} onCheckedChange={(checked) => updateTextCapabilities('jsonMode', checked === true)} />支持 JSON 输出</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.ocr} onCheckedChange={(checked) => updateTextCapabilities('ocr', checked === true)} />适合识别图片文字</label></div>
+            <label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.isActive} onCheckedChange={(checked) => setTextForm({ ...textForm, isActive: checked === true })} />启用此模型</label>
+            <label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.isDefault} onCheckedChange={(checked) => setTextForm({ ...textForm, isDefault: checked === true })} />设为默认模型</label>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setTextDialogOpen(false)}>取消</Button><Button onClick={handleSaveTextModel}>保存</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

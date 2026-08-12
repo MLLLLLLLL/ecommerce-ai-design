@@ -21,6 +21,8 @@ model User {
   folders       Folder[]
   projects      Project[]
   workflows     WorkflowTemplate[]
+  marketingTasks MarketingTask[]
+  modelConfigs   ModelConfig[]
   
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -57,6 +59,31 @@ model Config {
 }
 
 // ============================================
+// 服务端模型配置
+// ============================================
+
+model ModelConfig {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name            String
+  provider        String    @default("openai")
+  baseURL         String
+  model           String
+  apiKeyEncrypted String    @db.Text
+  capabilities    Json
+  isActive        Boolean   @default(true)
+  isDefault       Boolean   @default(false)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([userId, name])
+  @@index([userId, isActive])
+}
+
+// ============================================
 // 资源库
 // ============================================
 
@@ -64,7 +91,7 @@ model Asset {
   id              String    @id @default(uuid())
   userId          String
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   filename        String
   filepath        String    @unique
   thumbnail       String?
@@ -174,4 +201,47 @@ model WorkflowTemplate {
   updatedAt   DateTime  @updatedAt
   
   @@index([userId])
+}
+
+// ============================================
+// 电商营销任务
+// ============================================
+
+model MarketingTask {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 产品信息
+  productName     String
+  productImages   String[]  // 产品图URL数组
+  category        String?   // 品类
+  platform        String    // 目标平台
+  language        String    @default("zh-CN")
+
+  // 分析结果
+  analysis        Json?     // 产品识别报告
+
+  // 生成结果
+  copywriting     Json?     // 文案结果
+  mainPrompts     Json?     // 主图提示词
+  detailPrompts   Json?     // 详情页提示词
+
+  // 用户输入
+  sellPoints      String[]  // 核心卖点
+  keywords        String[]  // 目标关键词
+  parameters      Json?     // 产品参数
+
+  // 模型与执行记录（不含 API Key）
+  modelSnapshot   Json?
+  executionSteps  Json?
+
+  status          String    @default("draft") // draft/analyzing/completed/failed
+  error           String?   // 错误信息
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status])
 }
