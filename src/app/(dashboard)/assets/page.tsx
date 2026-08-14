@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,10 +13,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Search, Download, Trash2, Eye, FolderOpen, FileText } from 'lucide-react';
+import { Search, Download, Trash2, Eye, FolderOpen, FileText, Layout, Workflow } from 'lucide-react';
 import Image from 'next/image';
 import { toast } from 'sonner';
 import { getAssetUrl } from '@/lib/utils';
+import { ProjectPickerDialog } from '@/components/shared/ProjectPickerDialog';
+import { useWorkflowBridge } from '@/stores/workflowBridge';
 
 interface Asset {
   id: string;
@@ -43,8 +46,11 @@ interface Pagination {
 }
 
 export default function AssetsPage() {
+  const router = useRouter();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
+  // 加入画布/工作流：目标项目选择状态
+  const [picker, setPicker] = useState<{ type: 'canvas' | 'workflow'; asset: Asset } | null>(null);
   const [pagination, setPagination] = useState<Pagination>({
     page: 1,
     pageSize: 20,
@@ -115,6 +121,22 @@ export default function AssetsPage() {
       console.error('Delete error:', error);
       toast.error(error.message || '删除失败');
     }
+  };
+
+  // 加入画布/工作流：bridge 队列 + 跳转目标项目，编辑器加载完成后自动落位
+  const handlePickProject = (projectId: string) => {
+    if (!picker) return;
+    const url = getAssetUrl(picker.asset.filepath);
+    if (picker.type === 'canvas') {
+      useWorkflowBridge.getState().pushToCanvas(url);
+      toast.success('已加入画布，进入项目后自动落位');
+      router.push(`/canvas/${projectId}`);
+    } else {
+      useWorkflowBridge.getState().sendToWorkflow(url);
+      toast.success('已加入工作流，进入项目后自动创建图片输入节点');
+      router.push(`/workflow/${projectId}`);
+    }
+    setPicker(null);
   };
 
   const formatFileSize = (bytes: number) => {
@@ -241,6 +263,26 @@ export default function AssetsPage() {
                   >
                     <Eye className="h-3 w-3" />
                   </Button>
+                  {['png', 'jpg', 'jpeg', 'webp', 'gif'].includes((asset.format || '').toLowerCase()) && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        title="加入画布"
+                        onClick={() => setPicker({ type: 'canvas', asset })}
+                      >
+                        <Layout className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        title="加入工作流"
+                        onClick={() => setPicker({ type: 'workflow', asset })}
+                      >
+                        <Workflow className="h-3 w-3" />
+                      </Button>
+                    </>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -295,6 +337,16 @@ export default function AssetsPage() {
           </Button>
         </div>
       )}
+
+      {/* 加入画布/工作流：目标项目选择 */}
+      <ProjectPickerDialog
+        type={picker?.type ?? 'canvas'}
+        open={picker !== null}
+        onOpenChange={(open) => {
+          if (!open) setPicker(null);
+        }}
+        onSelect={handlePickProject}
+      />
     </div>
   );
 }

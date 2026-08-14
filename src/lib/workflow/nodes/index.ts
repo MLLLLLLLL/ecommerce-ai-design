@@ -4,6 +4,7 @@ import { OutputNode } from './output';
 import { TextToImageNode, ImageToImageNode, BackgroundRemovalNode } from './ai';
 import { CropNode, ResizeNode, FilterNode } from './image';
 import { ConditionNode } from './logic';
+import { OrchestratorNode } from './orchestrator';
 
 // 注册所有节点
 export function registerAllNodes() {
@@ -11,6 +12,9 @@ export function registerAllNodes() {
   NodeRegistry.register('textInput', new TextInputNode());
   NodeRegistry.register('imageInput', new ImageInputNode());
   NodeRegistry.register('parameterInput', new ParameterInputNode());
+
+  // 编排节点
+  NodeRegistry.register('orchestrator', new OrchestratorNode());
 
   // AI 节点
   NodeRegistry.register('textToImage', new TextToImageNode());
@@ -36,4 +40,5 @@ export * from './output';
 export * from './ai';
 export * from './image';
 export * from './logic';
+export * from './orchestrator';
 export * from '../portTypes';

@@ -3,7 +3,7 @@ import { getAssetUrl } from '@/lib/utils';
 
 // 通过服务端 API 路由调用 AI 服务（与文生图/图生图页面同链路，
 // 避免浏览器直连中转站的跨域问题），返回首张图片的可访问 URL
-async function generateViaServer(
+export async function generateViaServer(
   endpoint: '/api/ai/text-to-image' | '/api/ai/image-to-image',
   config: any,
   params: Record<string, any>

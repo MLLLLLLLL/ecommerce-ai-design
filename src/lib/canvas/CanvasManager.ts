@@ -11,6 +11,16 @@ export interface HistoryState {
   timestamp: number;
 }
 
+// 无限画布视口状态：x/y 为世界容器在视口内的平移量（像素），k 为缩放系数
+export interface ViewportState {
+  x: number;
+  y: number;
+  k: number;
+}
+
+export const MIN_ZOOM = 0.05;
+export const MAX_ZOOM = 5;
+
 export class CanvasManager {
   private canvas: fabric.Canvas | null = null;
   private history: HistoryState[] = [];
@@ -24,6 +34,8 @@ export class CanvasManager {
       height: options.height || 1080,
       backgroundColor: options.backgroundColor || '#ffffff',
       preserveObjectStacking: true,
+      // 无限画布：禁用框选，空白处按下用于拖拽平移（与 st-image 交互一致）
+      selection: false,
     });
 
     this.setupEventHandlers();
@@ -129,63 +141,6 @@ export class CanvasManager {
     this.canvas.renderAll();
   }
 
-  // 添加文字
-  addText(text: string = '双击编辑文字', options?: Partial<fabric.IText>) {
-    if (!this.canvas) return;
-
-    const textObj = new fabric.IText(text, {
-      left: 100,
-      top: 100,
-      fontSize: 32,
-      fill: '#000000',
-      fontFamily: 'Arial',
-      ...options,
-    });
-
-    this.canvas.add(textObj);
-    this.canvas.setActiveObject(textObj);
-    this.canvas.renderAll();
-  }
-
-  // 添加矩形
-  addRect(options?: Partial<fabric.Rect>) {
-    if (!this.canvas) return;
-
-    const rect = new fabric.Rect({
-      left: 100,
-      top: 100,
-      width: 200,
-      height: 150,
-      fill: '#3b82f6',
-      stroke: '#1e40af',
-      strokeWidth: 2,
-      ...options,
-    });
-
-    this.canvas.add(rect);
-    this.canvas.setActiveObject(rect);
-    this.canvas.renderAll();
-  }
-
-  // 添加圆形
-  addCircle(options?: Partial<fabric.Circle>) {
-    if (!this.canvas) return;
-
-    const circle = new fabric.Circle({
-      left: 100,
-      top: 100,
-      radius: 75,
-      fill: '#10b981',
-      stroke: '#047857',
-      strokeWidth: 2,
-      ...options,
-    });
-
-    this.canvas.add(circle);
-    this.canvas.setActiveObject(circle);
-    this.canvas.renderAll();
-  }
-
   // 删除选中对象
   deleteSelected() {
     if (!this.canvas) return;
@@ -227,6 +182,45 @@ export class CanvasManager {
     this.canvas.backgroundColor = '#ffffff';
     this.canvas.renderAll();
     this.saveState();
+  }
+
+  // ==================== 无限视口（借鉴 st-image：世界坐标系 + 平移缩放） ====================
+
+  // 获取当前视口状态
+  getViewport(): ViewportState {
+    const vt = this.canvas?.viewportTransform;
+    if (!vt) return { x: 0, y: 0, k: 1 };
+    return { x: vt[4], y: vt[5], k: vt[0] };
+  }
+
+  // 设置视口（k 为缩放系数，x/y 为世界容器平移量；无旋转，矩阵即 [k,0,0,k,x,y]）
+  setViewport(x: number, y: number, k: number) {
+    if (!this.canvas) return;
+    const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, k));
+    this.canvas.viewportTransform = [clamped, 0, 0, clamped, x, y];
+    // fabric 6+ 选中框角点坐标（oCoords）按视口缓存，程序化变更视口后不会自动重算，
+    // 需手动 setCoords 刷新，否则角点停留在旧视口位置（边框随渲染实时计算，不受影响）
+    const activeObject = this.canvas.getActiveObject();
+    if (activeObject) {
+      activeObject.setCoords();
+    }
+    this.canvas.requestRenderAll();
+  }
+
+  // 屏幕坐标（相对画布元素）→ 世界坐标
+  screenToWorld(screenX: number, screenY: number): { x: number; y: number } {
+    const { x, y, k } = this.getViewport();
+    return { x: (screenX - x) / k, y: (screenY - y) / k };
+  }
+
+  // 世界坐标 → 屏幕坐标（相对画布元素）
+  worldToScreen(worldX: number, worldY: number): { x: number; y: number } {
+    const { x, y, k } = this.getViewport();
+    return { x: worldX * k + x, y: worldY * k + y };
+  }
+
+  getZoom(): number {
+    return this.getViewport().k;
   }
 
   // 导出为图片

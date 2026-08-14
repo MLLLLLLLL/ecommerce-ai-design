@@ -4,59 +4,41 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import {
   MousePointer2,
-  Square,
-  Circle,
-  Type,
-  Image,
   Trash2,
   Copy,
   Undo2,
   Redo2,
   RotateCcw,
+  FileText,
+  ImagePlus,
+  Workflow,
+  Grid3X3,
 } from 'lucide-react';
 import { CanvasManager } from '@/lib/canvas/CanvasManager';
+import type { CanvasNodeKind } from '@/lib/canvas/nodes/types';
 import { useState } from 'react';
 
 interface CanvasToolbarProps {
   canvasManager: CanvasManager | null;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  onClear?: () => void;
+  // 添加画布节点（借鉴 st-image 画布节点体系）
+  onAddNode?: (kind: CanvasNodeKind) => void;
 }
 
-export function CanvasToolbar({ canvasManager }: CanvasToolbarProps) {
+export function CanvasToolbar({
+  canvasManager,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  onClear,
+  onAddNode,
+}: CanvasToolbarProps) {
   const [activeTool, setActiveTool] = useState<string>('select');
-
-  const handleAddRect = () => {
-    canvasManager?.addRect();
-    setActiveTool('select');
-  };
-
-  const handleAddCircle = () => {
-    canvasManager?.addCircle();
-    setActiveTool('select');
-  };
-
-  const handleAddText = () => {
-    canvasManager?.addText();
-    setActiveTool('select');
-  };
-
-  const handleAddImage = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const url = event.target?.result as string;
-        canvasManager?.addImage(url);
-      };
-      reader.readAsDataURL(file);
-    };
-    input.click();
-    setActiveTool('select');
-  };
 
   const handleDelete = () => {
     canvasManager?.deleteSelected();
@@ -67,16 +49,19 @@ export function CanvasToolbar({ canvasManager }: CanvasToolbarProps) {
   };
 
   const handleUndo = () => {
-    canvasManager?.undo();
+    if (onUndo) onUndo();
+    else canvasManager?.undo();
   };
 
   const handleRedo = () => {
-    canvasManager?.redo();
+    if (onRedo) onRedo();
+    else canvasManager?.redo();
   };
 
   const handleClear = () => {
     if (confirm('确定要清空画布吗？')) {
-      canvasManager?.clear();
+      if (onClear) onClear();
+      else canvasManager?.clear();
     }
   };
 
@@ -94,41 +79,42 @@ export function CanvasToolbar({ canvasManager }: CanvasToolbarProps) {
 
       <Separator orientation="vertical" className="h-6" />
 
-      {/* 形状工具 */}
+      {/* 画布节点（借鉴 st-image：文本/图片/编排/多图规划节点） */}
       <Button
         variant="ghost"
         size="icon"
-        onClick={handleAddRect}
-        title="矩形"
+        onClick={() => onAddNode?.('text')}
+        title="文本节点（可连线作为提示词）"
+        disabled={!onAddNode}
       >
-        <Square className="h-4 w-4" />
+        <FileText className="h-4 w-4" />
       </Button>
-
       <Button
         variant="ghost"
         size="icon"
-        onClick={handleAddCircle}
-        title="圆形"
+        onClick={() => onAddNode?.('image')}
+        title="图片输入节点（上传或粘贴 URL，可连线作为参考图）"
+        disabled={!onAddNode}
       >
-        <Circle className="h-4 w-4" />
+        <ImagePlus className="h-4 w-4" />
       </Button>
-
       <Button
         variant="ghost"
         size="icon"
-        onClick={handleAddText}
-        title="文字"
+        onClick={() => onAddNode?.('config')}
+        title="编排节点（组合提示词，按模式生成图片/文案）"
+        disabled={!onAddNode}
       >
-        <Type className="h-4 w-4" />
+        <Workflow className="h-4 w-4" />
       </Button>
-
       <Button
         variant="ghost"
         size="icon"
-        onClick={handleAddImage}
-        title="图片"
+        onClick={() => onAddNode?.('multiImagePlan')}
+        title="多图规划节点（AI 拆分提示词批量生成）"
+        disabled={!onAddNode}
       >
-        <Image className="h-4 w-4" />
+        <Grid3X3 className="h-4 w-4" />
       </Button>
 
       <Separator orientation="vertical" className="h-6" />
@@ -162,7 +148,7 @@ export function CanvasToolbar({ canvasManager }: CanvasToolbarProps) {
         size="icon"
         onClick={handleUndo}
         title="撤销"
-        disabled={!canvasManager?.canUndo()}
+        disabled={canUndo === undefined ? !canvasManager?.canUndo() : !canUndo}
       >
         <Undo2 className="h-4 w-4" />
       </Button>
@@ -172,7 +158,7 @@ export function CanvasToolbar({ canvasManager }: CanvasToolbarProps) {
         size="icon"
         onClick={handleRedo}
         title="重做"
-        disabled={!canvasManager?.canRedo()}
+        disabled={canRedo === undefined ? !canvasManager?.canRedo() : !canRedo}
       >
         <Redo2 className="h-4 w-4" />
       </Button>

@@ -6,6 +6,7 @@ import { Separator } from '@/components/ui/separator';
 
 const CATEGORY_LABELS: Record<string, string> = {
   input: '输入节点',
+  orchestration: '编排',
   ai: 'AI 处理',
   image: '图片处理',
   text: '文字处理',

@@ -3,6 +3,7 @@ export type NodeType =
   | 'textInput'
   | 'imageInput'
   | 'parameterInput'
+  | 'orchestrator'
   | 'textToImage'
   | 'imageToImage'
   | 'backgroundRemoval'
@@ -183,6 +184,7 @@ export class NodeRegistry {
   static getAllByCategory(): Record<string, WorkflowNode[]> {
     const categories: Record<string, WorkflowNode[]> = {
       input: [],
+      orchestration: [],
       ai: [],
       image: [],
       text: [],
@@ -194,6 +196,8 @@ export class NodeRegistry {
       const type = node.type;
       if (['textInput', 'imageInput', 'parameterInput'].includes(type)) {
         categories.input.push(node);
+      } else if (type === 'orchestrator') {
+        categories.orchestration.push(node);
       } else if (
         [
           'textToImage',
