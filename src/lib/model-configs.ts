@@ -2,7 +2,11 @@ import type { ModelConfig } from '@prisma/client';
 import { prisma } from '@/lib/db/prisma';
 import { decryptServerSecret } from '@/lib/security/server-encryption';
 import type { AIServiceConfig } from '@/types/ai';
-import type { ModelCapabilities, ModelConfigSummary } from '@/types/model-config';
+import type {
+  ModelCapabilities,
+  ModelConfigSummary,
+  TestedCapabilities,
+} from '@/types/model-config';
 
 const DEFAULT_CAPABILITIES: ModelCapabilities = {
   vision: false,
@@ -24,6 +28,18 @@ export function toCapabilities(value: unknown): ModelCapabilities {
   };
 }
 
+export function toTestedCapabilities(value: unknown): TestedCapabilities | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const input = value as Partial<TestedCapabilities>;
+  return {
+    connection: input.connection === true,
+    jsonMode: input.jsonMode === true,
+    vision: input.vision === true,
+  };
+}
+
 export function toModelConfigSummary(config: ModelConfig): ModelConfigSummary {
   return {
     id: config.id,
@@ -35,6 +51,10 @@ export function toModelConfigSummary(config: ModelConfig): ModelConfigSummary {
     isActive: config.isActive,
     isDefault: config.isDefault,
     apiKeyConfigured: Boolean(config.apiKeyEncrypted),
+    lastTestedAt: config.lastTestedAt?.toISOString() ?? null,
+    testStatus: config.testStatus,
+    testedCapabilities: toTestedCapabilities(config.testedCapabilities),
+    testError: config.testError,
     createdAt: config.createdAt.toISOString(),
     updatedAt: config.updatedAt.toISOString(),
   };

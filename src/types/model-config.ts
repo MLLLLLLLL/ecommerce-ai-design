@@ -15,8 +15,18 @@ export interface ModelConfigSummary {
   isActive: boolean;
   isDefault: boolean;
   apiKeyConfigured: boolean;
+  lastTestedAt?: string | null;
+  testStatus?: string | null;
+  testedCapabilities?: TestedCapabilities | null;
+  testError?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TestedCapabilities {
+  connection: boolean;
+  jsonMode: boolean;
+  vision: boolean;
 }
 
 export const DEFAULT_MODEL_CAPABILITIES: ModelCapabilities = {

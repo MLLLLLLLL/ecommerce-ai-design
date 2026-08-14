@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { SearchServiceSection } from './search-service-section';
 import {
   Dialog,
   DialogContent,
@@ -29,6 +30,7 @@ import { Download, Plus, Trash2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIServiceConfig } from '@/types/ai';
 import { DEFAULT_MODEL_CAPABILITIES, inferModelCapabilities, ModelCapabilities, ModelConfigSummary } from '@/types/model-config';
+import { generateId } from '@/lib/utils';
 
 export default function SettingsPage() {
   const { services, addService, updateService, deleteService } =
@@ -69,7 +71,8 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    void loadTextModels();
+    const timer = setTimeout(() => void loadTextModels(), 0);
+    return () => clearTimeout(timer);
   }, []);
 
   const handleSaveTextModel = async () => {
@@ -112,18 +115,31 @@ export default function SettingsPage() {
     try {
       const response = await fetch(`/api/model-configs/${modelId}/test`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
       });
 
       const data = await response.json();
 
       if (data.success) {
-        toast.success('连接成功！');
+        const report = data.data?.report ?? {};
+        const passedCount = ['connection', 'jsonMode', 'vision'].filter(
+          (kind) => report[kind]?.passed
+        ).length;
+        if (passedCount === 3) {
+          toast.success('实测通过：连接、JSON 输出、视觉输入均可用');
+        } else if (passedCount === 0) {
+          toast.error('实测未通过，请检查模型与 API Key');
+        } else {
+          toast.warning(`部分通过（${passedCount}/3）：请查看卡片上的测试摘要`);
+        }
+        await loadTextModels();
       } else {
-        toast.error(data.error || '连接失败');
+        toast.error(data.error || '测试失败');
       }
     } catch (error) {
       console.error('Text model test error:', error);
-      toast.error('连接测试失败');
+      toast.error('模型测试失败');
     } finally {
       setTextTesting(false);
     }
@@ -250,7 +266,7 @@ export default function SettingsPage() {
     }
 
     const config: AIServiceConfig = {
-      id: editingService?.id || crypto.randomUUID(),
+      id: editingService?.id || generateId(),
       provider: formData.provider,
       name: formData.name.trim(),
       apiKey: formData.apiKey.trim(),
@@ -287,7 +303,7 @@ export default function SettingsPage() {
       } else {
         toast.error(data.error || '连接失败');
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Test connection error:', error);
       toast.error('连接测试失败');
     } finally {
@@ -328,6 +344,7 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="services">图片模型</TabsTrigger>
           <TabsTrigger value="text-model">文本模型</TabsTrigger>
+          <TabsTrigger value="search">搜索服务</TabsTrigger>
           <TabsTrigger value="preferences">偏好设置</TabsTrigger>
         </TabsList>
 
@@ -441,9 +458,13 @@ export default function SettingsPage() {
             <CardHeader><div className="flex items-center justify-between gap-3"><CardTitle>文本模型</CardTitle><div className="flex gap-2"><Button variant="outline" size="sm" onClick={handleImportLegacyTextModels} disabled={textTesting}><Download className="mr-2 h-4 w-4" />导入旧配置</Button><Button size="sm" onClick={() => handleOpenTextDialog()}><Plus className="mr-2 h-4 w-4" />添加文本模型</Button></div></div></CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">可保存多个 OpenAI 兼容文本模型，并在营销助手中按视觉识别、内容生成角色分别选择。</p>
-              {textModelsLoading ? <p className="py-8 text-center text-sm text-muted-foreground">正在加载文本模型...</p> : textModels.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">暂无配置的文本模型</p> : <div className="grid gap-4 md:grid-cols-2">{textModels.map((textModel) => <Card key={textModel.id}><CardHeader><div className="flex items-start justify-between"><div><CardTitle className="text-lg">{textModel.name}</CardTitle><div className="mt-2 flex flex-wrap gap-2">{textModel.isDefault && <Badge>默认</Badge>}<Badge variant="outline">{textModel.model}</Badge>{textModel.capabilities.vision && <Badge variant="secondary">视觉</Badge>}{textModel.capabilities.jsonMode && <Badge variant="secondary">JSON</Badge>}{!textModel.isActive && <Badge variant="destructive">已停用</Badge>}</div></div><Button variant="ghost" size="icon" aria-label={`删除 ${textModel.name}`} onClick={() => handleDeleteTextModel(textModel.id)}><Trash2 className="h-4 w-4" /></Button></div></CardHeader><CardContent className="space-y-3"><p className="truncate text-sm text-muted-foreground">{textModel.baseURL}</p><div className="flex gap-2"><Button variant="outline" size="sm" className="flex-1" onClick={() => handleTestTextModel(textModel.id)} disabled={textTesting}>{textTesting ? <><Loader2 className="mr-2 h-3 w-3 animate-spin" />测试中...</> : '测试连接'}</Button><Button variant="outline" size="sm" onClick={() => handleOpenTextDialog(textModel.id)}>编辑</Button></div></CardContent></Card>)}</div>}
+              {textModelsLoading ? <p className="py-8 text-center text-sm text-muted-foreground">正在加载文本模型...</p> : textModels.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">暂无配置的文本模型</p> : <div className="grid gap-4 md:grid-cols-2">{textModels.map((textModel) => <Card key={textModel.id}><CardHeader><div className="flex items-start justify-between"><div><CardTitle className="text-lg">{textModel.name}</CardTitle><div className="mt-2 flex flex-wrap gap-2">{textModel.isDefault && <Badge>默认</Badge>}<Badge variant="outline">{textModel.model}</Badge>{textModel.capabilities.vision && <Badge variant="secondary">视觉</Badge>}{textModel.capabilities.jsonMode && <Badge variant="secondary">JSON</Badge>}{!textModel.isActive && <Badge variant="destructive">已停用</Badge>}</div></div><Button variant="ghost" size="icon" aria-label={`删除 ${textModel.name}`} onClick={() => handleDeleteTextModel(textModel.id)}><Trash2 className="h-4 w-4" /></Button></div></CardHeader><CardContent className="space-y-3"><p className="truncate text-sm text-muted-foreground">{textModel.baseURL}</p>{textModel.testStatus && <div className="space-y-1"><div className="flex flex-wrap items-center gap-2">{textModel.testStatus === 'passed' && <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">实测通过</Badge>}{textModel.testStatus === 'partial' && <Badge variant="secondary" className="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">实测部分通过</Badge>}{textModel.testStatus === 'failed' && <Badge variant="destructive">实测未通过</Badge>}{textModel.lastTestedAt && <span className="text-xs text-muted-foreground">{new Date(textModel.lastTestedAt).toLocaleString()}</span>}</div>{textModel.testError && <p className="break-all text-xs text-destructive">{textModel.testError}</p>}</div>}<div className="flex gap-2"><Button variant="outline" size="sm" className="flex-1" onClick={() => handleTestTextModel(textModel.id)} disabled={textTesting}>{textTesting ? <><Loader2 className="mr-2 h-3 w-3 animate-spin" />测试中...</> : '实测能力'}</Button><Button variant="outline" size="sm" onClick={() => handleOpenTextDialog(textModel.id)}>编辑</Button></div></CardContent></Card>)}</div>}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="search" className="space-y-4">
+          <SearchServiceSection />
         </TabsContent>
 
         <TabsContent value="preferences">
@@ -476,8 +497,8 @@ export default function SettingsPage() {
               <Label>模型提供商</Label>
               <Select
                 value={formData.provider}
-                onValueChange={(value: any) =>
-                  setFormData({ ...formData, provider: value })
+                onValueChange={(value) =>
+                  setFormData({ ...formData, provider: value as 'openai' | 'alibaba' | 'relay' })
                 }
               >
                 <SelectTrigger>
@@ -530,8 +551,8 @@ export default function SettingsPage() {
                   <Label>中转站类型</Label>
                   <Select
                     value={formData.relayType}
-                    onValueChange={(value: any) =>
-                      setFormData({ ...formData, relayType: value })
+                    onValueChange={(value) =>
+                      setFormData({ ...formData, relayType: value as 'openai' | 'sd' })
                     }
                   >
                     <SelectTrigger>

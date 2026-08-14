@@ -21,8 +21,10 @@ model User {
   folders       Folder[]
   projects      Project[]
   workflows     WorkflowTemplate[]
+  canvasProjects CanvasProject[]
   marketingTasks MarketingTask[]
   modelConfigs   ModelConfig[]
+  searchServices SearchServiceConfig[]
   
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -75,6 +77,12 @@ model ModelConfig {
   capabilities    Json
   isActive        Boolean   @default(true)
   isDefault       Boolean   @default(false)
+
+  // 能力实测结果（V3 5.2）：营销生成前据此预检
+  lastTestedAt       DateTime?
+  testStatus         String?   // passed/partial/failed
+  testedCapabilities Json?     // 实测通过的 connection/jsonMode/vision
+  testError          String?   // 脱敏错误摘要
 
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -204,6 +212,26 @@ model WorkflowTemplate {
 }
 
 // ============================================
+// 无限画布项目（仓库模式：/canvas 列表 → /canvas/[id] 编辑器）
+// definition 为 version 2 复合格式：{ version, fabric, nodes, connections, viewport }
+// ============================================
+
+model CanvasProject {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name       String
+  thumbnail  String?  @db.Text // 导出 PNG 的 dataURL，用于仓库卡片预览
+  definition Json
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId, updatedAt])
+}
+
+// ============================================
 // 电商营销任务
 // ============================================
 
@@ -239,9 +267,110 @@ model MarketingTask {
   status          String    @default("draft") // draft/analyzing/completed/failed
   error           String?   // 错误信息
 
+  // V3 新增字段（2026-08-13）
+  module          String    @default("copywriting") // copywriting/translate/seo/geo/insight
+  input           Json?     // 版本化输入快照（不含密钥）
+  result          Json?     // 统一结果快照
+  selectedOutputs String[]  @default([]) // 用户选择的输出项
+  isFavorite      Boolean   @default(false)
+  schemaVersion   Int       @default(1)
+
+  // V3 Phase 6 异步字段
+  cancelRequestedAt DateTime?
+  items           MarketingTaskItem[]
+  events          MarketingTaskEvent[]
+
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
   @@index([userId, createdAt])
   @@index([status])
+  @@index([userId, module, isFavorite])
+}
+
+// ============================================
+// 营销任务子项（V3 Phase 6）
+// 任务拆分为可独立执行、领取、重试与取消的 item。
+// 租约（leaseOwner + leaseExpiresAt）防止多 Worker 重复执行。
+// ============================================
+
+model MarketingTaskItem {
+  id             String    @id @default(uuid())
+  taskId         String
+  task           MarketingTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId         String
+
+  // analysis/copywriting/mainPrompts/detailPrompts/translate:<lang>/seo/geo/insight:<type>
+  kind           String
+  role           String?   // vision/content
+  modelId        String?
+  dependsOn      String?   // 依赖的前置 item kind（如 analysis）
+
+  status         String    @default("pending") // pending/running/completed/failed/skipped/cancelled
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(1)
+  input          Json?     // 该 item 的输入快照（不含密钥）
+  result         Json?     // 输出快照
+  error          String?
+
+  leaseOwner     String?
+  leaseExpiresAt DateTime?
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userId, taskId])
+  @@index([status, leaseExpiresAt])
+  @@index([taskId, createdAt])
+}
+
+// ============================================
+// 营销任务事件（V3 Phase 6）
+// 审计事件流：状态变更、取消与重试可追溯；支持游标分页与 SSE。
+// ============================================
+
+model MarketingTaskEvent {
+  id        String   @id @default(uuid())
+  taskId    String
+  task      MarketingTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  itemId    String?
+  type      String   // task_created/item_started/item_completed/item_failed/item_retried/task_completed/task_failed/task_cancelled/cancel_requested
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+  @@index([userId, createdAt])
+}
+
+// ============================================
+// 搜索服务配置（V3 Phase 7）
+// 联网搜索供应商配置：密钥仅存服务端，实测通过后才可用于联网模块。
+// ============================================
+
+model SearchServiceConfig {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name            String
+  provider        String    @default("tavily") // tavily/serper/custom
+  baseURL         String
+  apiKeyEncrypted String    @db.Text
+  isActive        Boolean   @default(true)
+  isDefault       Boolean   @default(false)
+
+  lastTestedAt    DateTime?
+  testStatus      String?   // passed/failed
+  testError       String?
+
+  maxQueriesPerTask Int     @default(12)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([userId, name])
+  @@index([userId, isActive])
 }

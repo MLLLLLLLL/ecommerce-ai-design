@@ -1,12 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { MarketingWorkspace } from '@/components/marketing/MarketingWorkspace';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { MarketingWorkbench } from '@/components/marketing/workspace/MarketingWorkbench';
+import { AlertCircle, ArrowLeftRight, Loader2 } from 'lucide-react';
 import type { ModelConfigSummary } from '@/types/model-config';
 
-export default function MarketingPage() {
+function MarketingPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const legacyMode = searchParams.get('mode') === 'legacy';
+
   const [models, setModels] = useState<ModelConfigSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +36,9 @@ export default function MarketingPage() {
     void loadModels();
   }, []);
 
-  const hasVisionModel = models.some((model) => model.isActive && model.capabilities.vision && model.capabilities.jsonMode && !model.capabilities.imageGeneration);
+  const hasVisionModel = models.some(
+    (model) => model.isActive && model.capabilities.vision && model.capabilities.jsonMode && !model.capabilities.imageGeneration
+  );
 
   if (loading) {
     return (
@@ -45,16 +54,60 @@ export default function MarketingPage() {
         <Alert variant={error ? 'destructive' : 'default'}>
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            {error || '请先在设置的“文本模型”中保存并启用支持视觉输入的模型，例如 ToAPI 的 gpt-5.6-terra、gpt-5.6-sol 或 claude-sonnet-4-6。'}
+            {error || '请先在设置的"文本模型"中保存并启用支持视觉输入的模型，例如 ToAPI 的 gpt-5.6-terra、gpt-5.6-sol 或 claude-sonnet-4-6。'}
           </AlertDescription>
         </Alert>
       </div>
     );
   }
 
+  if (legacyMode) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex items-center justify-end px-4 pt-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push('/marketing')}
+          >
+            <ArrowLeftRight className="mr-2 h-3.5 w-3.5" />
+            切换到新工作台
+          </Button>
+        </div>
+        <MarketingWorkspace models={models} onError={setError} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <MarketingWorkspace models={models} onError={setError} />
+      <div className="flex items-center justify-end px-4 pt-4">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => router.push('/marketing?mode=legacy')}
+        >
+          <ArrowLeftRight className="mr-2 h-3.5 w-3.5" />
+          旧版向导
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1">
+        <MarketingWorkbench models={models} />
+      </div>
     </div>
+  );
+}
+
+export default function MarketingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-full items-center justify-center">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        </div>
+      }
+    >
+      <MarketingPageContent />
+    </Suspense>
   );
 }
