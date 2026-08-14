@@ -48,3 +48,6 @@ next-env.d.ts
 
 # tool metadata
 .zcode/
+
+# 备份文件
+*.bak
