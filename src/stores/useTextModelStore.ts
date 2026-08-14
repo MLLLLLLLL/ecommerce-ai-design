@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { encryptApiKey, decryptApiKey } from '@/lib/security/encryption';
+import { generateId } from '@/lib/utils';
 
 /**
  * 文本模型配置（用于提示词优化等 LLM 功能）
@@ -78,7 +79,7 @@ export const useTextModelStore = create<TextModelState>()(
        * apiKey 加密后持久化
        */
       setTextModel: (config) => {
-        const id = config.id || crypto.randomUUID();
+        const id = config.id || generateId();
         const encrypted = {
           ...config,
           id,
@@ -97,7 +98,7 @@ export const useTextModelStore = create<TextModelState>()(
       },
 
       addTextModel: (config) => {
-        const id = crypto.randomUUID();
+        const id = generateId();
         get().setTextModel({ ...config, id });
         return id;
       },
@@ -137,7 +138,7 @@ export const useTextModelStore = create<TextModelState>()(
         const state = persisted as { config?: Omit<TextModelConfig, 'id' | 'name'> & Partial<Pick<TextModelConfig, 'id' | 'name'>>; models?: TextModelConfig[]; activeModelId?: string | null };
         if (state.models) return state;
         if (state.config) {
-          const id = state.config.id || crypto.randomUUID();
+          const id = state.config.id || generateId();
           return {
             models: [{ ...state.config, id, name: state.config.name || state.config.model }],
             activeModelId: id,

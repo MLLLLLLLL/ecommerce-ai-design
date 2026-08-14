@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { configEmitter } from '@/lib/ai/AIServiceManager';
 import { AIServiceConfig } from '@/types/ai';
 import { encryptApiKey, decryptApiKey } from '@/lib/security/encryption';
+import { generateId } from '@/lib/utils';
 
 /**
  * 配置状态接口
@@ -112,7 +113,7 @@ export const useConfigStore = create<ConfigState>()(
       addService: (config) => {
         const newService: AIServiceConfig = {
           ...config,
-          id: crypto.randomUUID(),
+          id: generateId(),
           apiKey: encryptApiKey(config.apiKey),
           maxConcurrent: config.maxConcurrent || 50,
         };
@@ -209,7 +210,7 @@ export const useConfigStore = create<ConfigState>()(
       importServices: (services) => {
         const encryptedServices = services.map((s) => ({
           ...s,
-          id: s.id || crypto.randomUUID(),
+          id: s.id || generateId(),
           apiKey: encryptApiKey(s.apiKey),
           maxConcurrent: s.maxConcurrent || 50,
         }));
