@@ -15,10 +15,13 @@ export const TEXT_MODEL_API_PROTOCOLS = ['chat_completions', 'responses'] as con
 
 export type TextModelApiProtocol = (typeof TEXT_MODEL_API_PROTOCOLS)[number];
 
+export type RelayType = 'openai' | 'sd' | 'toapis';
+
 export interface ModelConfigSummary {
   id: string;
   name: string;
   provider: string;
+  relayType?: RelayType | null;
   baseURL: string;
   model: string;
   apiProtocol: TextModelApiProtocol;

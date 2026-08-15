@@ -180,8 +180,8 @@ async function executeClaimed(item: MarketingTaskItem): Promise<void> {
 
     const result = await executeMarketingItem(task, item);
     const now = new Date();
-    await prisma.marketingTaskItem.update({
-      where: { id: item.id },
+    const completed = await prisma.marketingTaskItem.updateMany({
+      where: { id: item.id, status: 'running', leaseOwner: WORKER_ID },
       data: {
         status: 'completed',
         result: result as Prisma.InputJsonValue,
@@ -191,6 +191,11 @@ async function executeClaimed(item: MarketingTaskItem): Promise<void> {
         leaseExpiresAt: null,
       },
     });
+    // 强制停止或租约恢复可能已将 item 改成其他状态，迟到的上游响应不能覆盖终态。
+    if (completed.count === 0) {
+      await aggregateTaskByModule(item.taskId);
+      return;
+    }
 
     // analysis 结果即时写回任务，解除下游依赖
     if (item.kind === 'analysis') {
@@ -209,6 +214,15 @@ async function executeClaimed(item: MarketingTaskItem): Promise<void> {
     );
     await aggregateTaskByModule(item.taskId);
   } catch (error) {
+    const latestItem = await prisma.marketingTaskItem.findUnique({
+      where: { id: item.id },
+      select: { status: true },
+    });
+    // 强制停止后忽略迟到的异常，不允许把 cancelled 改回 pending/failed。
+    if (latestItem?.status === 'cancelled') {
+      await aggregateTaskByModule(item.taskId);
+      return;
+    }
     const message = error instanceof Error ? error.message.slice(0, 1000) : '未知错误';
     const attempts = item.attempts; // claim 时已 increment
 

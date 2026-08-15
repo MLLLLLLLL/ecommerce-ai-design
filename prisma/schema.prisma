@@ -71,6 +71,7 @@ model ModelConfig {
 
   name            String
   provider        String    @default("openai")
+  relayType       String?
   baseURL         String
   model           String
   apiProtocol     String    @default("chat_completions")
@@ -299,6 +300,7 @@ model MarketingTask {
   stepModels      Json?     // stepKey -> modelId 选择快照
   stepResults     Json?     // stepKey -> 审批后的步骤结果版本
   pausedAt        DateTime? // 批量生图暂停标记
+  createIdempotencyKey String? // 创建营销助手2任务的幂等键
 
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -307,6 +309,7 @@ model MarketingTask {
   @@index([status])
   @@index([userId, module, isFavorite])
   @@index([userId, workflowKey])
+  @@unique([userId, createIdempotencyKey])
 }
 
 // ============================================

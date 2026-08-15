@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -107,6 +107,7 @@ export function WorkflowRunner({
   const [activeStep, setActiveStep] = useState<string>(workflow?.steps[0]?.key ?? '');
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [stepEdits, setStepEdits] = useState<StepEdits | null>(null);
   const [overrides, setOverrides] = useState<QualityOverride[]>([]);
   const [exportFormat, setExportFormat] = useState('markdown');
@@ -222,12 +223,15 @@ export function WorkflowRunner({
 
   const wrapBusy = useCallback(
     async (action: () => Promise<void>) => {
+      if (busyRef.current) return;
+      busyRef.current = true;
       setBusy(true);
       try {
         await action();
       } catch (error) {
         handleError(error, '操作失败');
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     },

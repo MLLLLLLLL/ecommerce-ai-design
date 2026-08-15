@@ -23,8 +23,10 @@ test.describe('营销助手2卡片中心', () => {
     await page.goto('/marketing2');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByText('主图详情页全自动生成', { exact: true }).first()).toBeVisible();
-    await expect(page.getByText('底图净化', { exact: true })).toHaveCount(0);
+    const workflowCards = page.getByTestId('workflow-card');
+    await expect(workflowCards).toHaveCount(1);
+    await expect(workflowCards.getByText('主图详情页全自动生成', { exact: true })).toBeVisible();
+    await expect(workflowCards.getByText('底图净化', { exact: true })).toHaveCount(0);
 
     const unexpected = errors.filter((text) =>
       CONSOLE_ERROR_PATTERNS.some((pattern) => pattern.test(text))

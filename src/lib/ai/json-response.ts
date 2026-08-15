@@ -92,7 +92,7 @@ export function parseJSONCandidate<T>(value: string): T | null {
 export interface CompleteJSONOptions {
   /** 出错信息中的结果标签，如“产品分析”。 */
   label?: string;
-  /** 是否在 JSON 无法解析时让模型修复一次（额外一次模型调用）。 */
+  /** 是否在 JSON 无法解析或 Schema 不匹配时让模型修复一次（额外一次模型调用）。 */
   repair?: boolean;
   /** 修复请求的 prompt（默认内置 JSON 修复器）。 */
   repairPrompt?: string;
@@ -100,6 +100,45 @@ export interface CompleteJSONOptions {
 
 const DEFAULT_REPAIR_PROMPT =
   '你是JSON修复器。只输出合法JSON对象，不要Markdown、解释或代码围栏。保留原内容，不要补充不存在的事实。';
+
+function formatSchemaIssues(error: z.ZodError): string {
+  return error.issues
+    .slice(0, 5)
+    .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+    .join('；');
+}
+
+async function repairJSONResponse(
+  client: TextCompletionClient,
+  request: TextCompletionRequest,
+  content: string,
+  label: string,
+  options: CompleteJSONOptions,
+  schemaIssues?: string
+): Promise<{ content: string; parsed: unknown } | null> {
+  try {
+    const repairedContent = await client.complete({
+      messages: [
+        { role: 'system', content: options.repairPrompt ?? DEFAULT_REPAIR_PROMPT },
+        {
+          role: 'user',
+          content:
+            `请修复下面${label}模型响应，使其成为符合要求的JSON对象。` +
+            (schemaIssues ? `\n当前结构问题：${schemaIssues}` : '') +
+            '\n可以去除包装层、将同义字段改为要求的字段名，或将已有内容重组到必填字段。不得添加原响应中没有的事实。' +
+            `\n<response>\n${content.slice(0, 16000)}\n</response>`,
+        },
+      ],
+      responseFormat: request.responseFormat,
+      signal: request.signal,
+    });
+    const parsed = parseJSONCandidate<unknown>(repairedContent);
+    return parsed === null ? null : { content: repairedContent, parsed };
+  } catch (error) {
+    if (!(error instanceof TextCompletionError)) throw error;
+    return null;
+  }
+}
 
 /**
  * 调用模型并返回通过 Schema 校验的对象。
@@ -119,29 +158,14 @@ export async function completeJSON<T>(
 
   let content = await client.complete(request);
   let parsed = parseJSONCandidate<unknown>(content);
+  let repairAttempted = false;
 
   if (parsed === null && options.repair) {
-    try {
-      const repairedContent = await client.complete({
-        messages: [
-          { role: 'system', content: options.repairPrompt ?? DEFAULT_REPAIR_PROMPT },
-          {
-            role: 'user',
-            content: `请修复下面${label}模型响应，使其成为合法JSON。若内容不完整，尽量依据已有字段补齐为空字符串、空数组或空对象。\n<response>\n${content.slice(0, 16000)}\n</response>`,
-          },
-        ],
-        responseFormat: request.responseFormat,
-        signal: request.signal,
-      });
-      parsed = parseJSONCandidate<unknown>(repairedContent);
-      if (parsed !== null) {
-        content = repairedContent;
-      }
-    } catch (error) {
-      if (!(error instanceof TextCompletionError)) {
-        throw error;
-      }
-      // 修复调用失败时继续按原始内容报错。
+    repairAttempted = true;
+    const repaired = await repairJSONResponse(client, request, content, label, options);
+    if (repaired) {
+      content = repaired.content;
+      parsed = repaired.parsed;
     }
   }
 
@@ -151,12 +175,24 @@ export async function completeJSON<T>(
     });
   }
 
-  const result = schema.safeParse(parsed);
+  let result = schema.safeParse(parsed);
+  if (!result.success && options.repair && !repairAttempted) {
+    repairAttempted = true;
+    const repaired = await repairJSONResponse(
+      client,
+      request,
+      content,
+      label,
+      options,
+      formatSchemaIssues(result.error)
+    );
+    if (repaired) {
+      result = schema.safeParse(repaired.parsed);
+    }
+  }
+
   if (!result.success) {
-    const issues = result.error.issues
-      .slice(0, 5)
-      .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
-      .join('；');
+    const issues = formatSchemaIssues(result.error);
     throw new TextCompletionError(`${label}结构不符合预期：${issues}`, 'schema_mismatch', {
       retryable: false,
     });

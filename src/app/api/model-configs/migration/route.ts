@@ -17,7 +17,8 @@ import { inferModelCapabilities } from '@/types/model-config';
 
 const migrateServiceSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  provider: z.enum(['openai', 'alibaba', 'relay']),
+  provider: z.enum(['openai', 'alibaba', 'relay', 'toapis']),
+  relayType: z.enum(['openai', 'sd', 'toapis']).optional(),
   baseURL: z.url().max(500).optional(),
   model: z.string().trim().min(1).max(160).optional(),
   apiKey: z.string().trim().min(1).max(2000),
@@ -56,8 +57,9 @@ export async function POST(request: NextRequest) {
           userId: user.id,
           name: service.name,
           provider: service.provider,
+          relayType: service.relayType,
           baseURL: (service.baseURL ?? 'https://api.openai.com/v1').replace(/\/+$/, ''),
-          model: service.model ?? service.name,
+          model: service.model ?? (service.provider === 'toapis' || service.relayType === 'toapis' ? 'gpt-image-2' : service.name),
           apiKeyEncrypted: encryptServerSecret(service.apiKey),
           capabilities: capabilities as unknown as Prisma.InputJsonValue,
           isActive: true,

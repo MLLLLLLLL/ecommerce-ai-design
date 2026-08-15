@@ -20,6 +20,8 @@ import {
   resolveImageToDataURL,
 } from '@/lib/marketing2/asset-versioning';
 import { parseItemKind, STEP_CAPABILITY_MATRIX } from '@/lib/marketing2/workflow-registry';
+import { getPromptSlotDefinitions, type PromptPlanKind, type PromptSlotDefinition } from '@/lib/marketing2/prompt-planning';
+import { visualAnalysisModelSchema } from '@/lib/marketing2/visual-analysis';
 import { prisma } from '@/lib/db/prisma';
 import { getAssetUrl } from '@/lib/utils';
 import type { ModelCapabilityKey } from '@/types/model-config';
@@ -74,9 +76,13 @@ export async function executeMarketing2Item(
           return executeVisualAnalysis(task, item);
         case 'prompt_planning':
           return executePromptPlanning(task, item);
+        case 'prompt_outline':
+          return executePromptOutline(task, item);
         default:
           throw new Marketing2Error('STEP_NOT_FOUND', `未知的 item 类型：${item.kind}`);
       }
+    case 'prompt_plan':
+      return executePromptPlan(task, item, parsed.kind, parsed.index);
     case 'main_image':
     case 'detail_page':
       return executeImageGeneration(task, item, parsed.type, parsed.index);
@@ -213,15 +219,6 @@ async function executeBackgroundCleanup(
 // visual_analysis：视觉识别（vision + jsonMode）
 // --------------------------------------------
 
-const visualAnalysisModelSchema = z.object({
-  appearanceLock: z.string().min(1).max(4000),
-  visibleTexts: z.array(z.string()).default([]),
-  materials: z.array(z.string()).default([]),
-  structure: z.string().max(2000).default(''),
-  risks: z.array(z.string()).default([]),
-  pendingFacts: z.array(z.string()).default([]),
-});
-
 async function executeVisualAnalysis(
   task: MarketingTask,
   item: MarketingTaskItem
@@ -251,7 +248,8 @@ async function executeVisualAnalysis(
           role: 'system',
           content:
             '你是电商产品视觉分析专家。只描述图片中可见的事实，不推测参数与销量。' +
-            '输出外观锁定描述（供后续生图保持产品一致），并列出可见文字、材质、结构、风险与待确认事实。',
+            '输出外观锁定描述（供后续生图保持产品一致），并列出可见文字、材质、结构、风险与待确认事实。' +
+            '顶层必须是一个 JSON 对象，不能输出数组；appearanceLock 必须是非空字符串，其余字段也不得省略。',
         },
         {
           role: 'user',
@@ -272,15 +270,157 @@ async function executeVisualAnalysis(
       maxTokens: 3000,
     },
     visualAnalysisModelSchema,
-    { label: '产品视觉识别' }
+    {
+      label: '产品视觉识别',
+      repair: true,
+      repairPrompt:
+        '你是电商产品视觉识别 JSON 结构修复器。只输出一个合法 JSON 对象，包含 appearanceLock、visibleTexts、materials、structure、risks、pendingFacts。将同义字段映射到这些字段，只重组原响应已有的可见事实，不要补造产品信息，不要 Markdown、解释或代码围栏。',
+    }
   );
 
   return { ...result, modelSnapshot: buildModelSnapshot(model) };
 }
 
 // --------------------------------------------
-// prompt_planning：策划与逐张提示词（jsonMode）
+// prompt_planning：先生成框架，再逐张生成提示词（jsonMode）
 // --------------------------------------------
+
+const promptPlanFieldsSchema = z.object({
+  keyword: z.string().max(60).default(''),
+  responsibility: z.string().max(300).default(''),
+  sellPoint: z.string().max(200).default(''),
+  placeholderParams: z.array(z.string()).default([]),
+  prompt: z.string().min(1).max(4000),
+  negativePrompt: z.string().max(1000).optional(),
+  textModules: z.array(z.string().max(200)).default([]),
+});
+
+const promptOutlineModelSchema = z.object({
+  slots: z.array(z.object({
+    kind: z.enum(['main_image', 'detail_page']),
+    index: z.number().int().min(1),
+    title: z.string().max(100).default(''),
+    responsibility: z.string().max(300).default(''),
+    sellPoint: z.string().max(200).default(''),
+  })).min(1).max(30),
+});
+
+const promptPlanModelSchema = z.object({ plan: promptPlanFieldsSchema });
+
+function taskInput(task: MarketingTask): Record<string, unknown> {
+  return (task.input as Record<string, unknown>) ?? {};
+}
+
+function visualAppearanceLock(task: MarketingTask): string {
+  const stepResults = (task.stepResults as Record<string, Record<string, unknown>> | null) ?? {};
+  const analysis = (stepResults.visual_analysis?.result as Record<string, unknown>) ?? {};
+  return typeof analysis.appearanceLock === 'string' ? analysis.appearanceLock : '';
+}
+
+async function executePromptOutline(
+  task: MarketingTask,
+  item: MarketingTaskItem
+): Promise<Record<string, unknown>> {
+  const input = taskInput(task);
+  const slots = getPromptSlotDefinitions(input.mainImageCount, input.detailPageCount);
+  const model = await resolveItemModel(item, 'prompt_planning');
+  const client = createTextClient(model);
+  const result = await completeJSON(
+    client,
+    {
+      messages: [
+        {
+          role: 'system',
+          content: '你是电商视觉策划专家。只优化给定的图片方案框架，不新增图片数量，不编造产品参数。',
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            productName: input.productName ?? task.productName,
+            platform: input.platform,
+            language: input.language,
+            sellPoints: input.sellPoints ?? [],
+            parameters: input.parameters ?? {},
+            targetAudience: input.targetAudience ?? '',
+            designStyle: input.designStyle ?? '',
+            forbidden: input.forbidden ?? [],
+            appearanceLock: visualAppearanceLock(task),
+            slots,
+            instruction: '严格返回 JSON：{"slots":[{"kind":"main_image"|"detail_page","index":number,"title":string,"responsibility":string,"sellPoint":string}]}。必须覆盖输入中的每个 slot。',
+          }, null, 2),
+        },
+      ],
+      responseFormat: 'json_object',
+      temperature: 0.4,
+      maxTokens: 1600,
+    },
+    promptOutlineModelSchema,
+    { label: '主图与详情页方案框架' }
+  );
+
+  const generated = new Map(
+    result.slots.map((slot) => [`${slot.kind}:${slot.index}`, slot])
+  );
+  return {
+    appearanceLock: visualAppearanceLock(task),
+    slots: slots.map((slot) => ({
+      ...slot,
+      ...(generated.get(`${slot.kind}:${slot.index}`) ?? {}),
+    })),
+    modelSnapshot: buildModelSnapshot(model),
+  };
+}
+
+async function executePromptPlan(
+  task: MarketingTask,
+  item: MarketingTaskItem,
+  kind: PromptPlanKind,
+  index: number
+): Promise<Record<string, unknown>> {
+  const input = taskInput(task);
+  const itemData = itemInput(item);
+  const fallbackSlot = getPromptSlotDefinitions(input.mainImageCount, input.detailPageCount)
+    .find((slot) => slot.kind === kind && slot.index === index);
+  const slot = (itemData.outline as PromptSlotDefinition | undefined) ?? fallbackSlot;
+  if (!slot) throw new Marketing2Error('INPUT_INVALID', `缺少第 ${index} 个${kind === 'main_image' ? '主图' : '详情页'}方案框架`);
+
+  const model = await resolveItemModel(item, 'prompt_planning');
+  const client = createTextClient(model);
+  const result = await completeJSON(
+    client,
+    {
+      messages: [
+        {
+          role: 'system',
+          content: '你是电商生图提示词专家。只为当前一个图片方案生成可直接使用的提示词，不编造产品参数，不输出其他方案。',
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            productName: input.productName ?? task.productName,
+            platform: input.platform,
+            language: input.language,
+            sellPoints: input.sellPoints ?? [],
+            parameters: input.parameters ?? {},
+            targetAudience: input.targetAudience ?? '',
+            designStyle: input.designStyle ?? '',
+            forbidden: input.forbidden ?? [],
+            appearanceLock: visualAppearanceLock(task),
+            slot,
+            instruction: '严格返回 JSON：{"plan":{"keyword":string,"responsibility":string,"sellPoint":string,"placeholderParams":string[],"prompt":string,"negativePrompt":string,"textModules":string[]}}。prompt 必须包含主体、构图、光线、背景、风格和产品一致性约束。',
+          }, null, 2),
+        },
+      ],
+      responseFormat: 'json_object',
+      temperature: 0.5,
+      maxTokens: 2400,
+    },
+    promptPlanModelSchema,
+    { label: `${kind === 'main_image' ? '主图' : '详情页'} ${index} 提示词` }
+  );
+
+  return { kind, index, title: slot.title, ...result.plan, modelSnapshot: buildModelSnapshot(model) };
+}
 
 const promptPlanningModelSchema = z.object({
   plans: z

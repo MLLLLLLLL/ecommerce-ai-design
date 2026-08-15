@@ -14,6 +14,10 @@ const TOAPI_RATIOS = [
 // ToAPI 4k 分辨率仅支持 6 种比例
 const TOAPI_4K_RATIOS = new Set(['16:9', '9:16', '2:1', '1:2', '21:9', '9:21']);
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
+}
+
 /**
  * 中转站适配器
  * 支持OpenAI兼容格式和Stable Diffusion格式
@@ -21,7 +25,7 @@ const TOAPI_4K_RATIOS = new Set(['16:9', '9:16', '2:1', '1:2', '21:9', '9:21']);
  */
 export class RelayAdapter extends AIServiceAdapter {
   private baseURL: string;
-  private relayType: 'openai' | 'sd';
+  private relayType: 'openai' | 'sd' | 'toapis';
 
   constructor(config: AIServiceConfig) {
     super(config);
@@ -51,7 +55,12 @@ export class RelayAdapter extends AIServiceAdapter {
    * 是否为 ToAPI 中转站（图片接口为异步任务模式，且要求比例/分辨率参数）
    */
   private isToAPI(): boolean {
-    return /toapis\.com/i.test(this.baseURL) || this.config.model?.toLowerCase() === 'gpt-image-2';
+    if (this.relayType === 'toapis') return true;
+    try {
+      return /(?:^|\.)toapis\.com(?::\d+)?$/i.test(new URL(this.baseURL).hostname);
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -80,14 +89,68 @@ export class RelayAdapter extends AIServiceAdapter {
   }
 
   /**
+   * ToAPIs 不同图片模型的分辨率字段和可用档位不同：
+   * GPT-Image-2 使用顶层小写 resolution；Gemini/Seedream 使用 metadata.resolution。
+   */
+  private toAPIModelPayload(params: {
+    prompt: string;
+    samples: number;
+    width: number;
+    height: number;
+    imageUrl?: string;
+  }): Record<string, unknown> {
+    const model = this.config.model || 'gpt-image-2';
+    const normalizedModel = model.toLowerCase();
+    const { size, resolution } = this.toAPISize(params.width, params.height);
+    const requestedResolution = Math.max(params.width, params.height) >= 3072
+      ? '4K'
+      : Math.max(params.width, params.height) >= 1536
+      ? '2K'
+      : '1K';
+    const isGemini25 = normalizedModel.includes('gemini-2.5-flash-image');
+    const isGemini31 = normalizedModel.includes('gemini-3.1-flash-image');
+    const isSeedreamPro = normalizedModel.includes('doubao-seedream-5-0-pro');
+    const isModelMetadataProtocol = isGemini25 || isGemini31 || isSeedreamPro;
+
+    let modelResolution = resolution;
+    if (isGemini25) {
+      modelResolution = '1K';
+    } else if (isSeedreamPro) {
+      modelResolution = resolution === '1k' ? '1K' : '2K';
+    } else if (isGemini31) {
+      modelResolution = requestedResolution;
+    }
+
+    const payload: Record<string, unknown> = {
+      model,
+      prompt: params.prompt,
+      n: isGemini25 || isGemini31 ? 1 : params.samples,
+      size,
+    };
+
+    if (isModelMetadataProtocol) {
+      payload.metadata = { resolution: modelResolution };
+      if (params.imageUrl) payload.image_urls = [params.imageUrl];
+    } else {
+      payload.resolution = resolution;
+      payload.response_format = 'url';
+      if (params.imageUrl) payload.reference_images = [params.imageUrl];
+    }
+
+    return payload;
+  }
+
+  /**
    * 上传图片到中转站获取公网 URL（ToAPI 图生图要求公网 URL，不支持 base64）
    */
   private async uploadImage(data: string): Promise<string> {
-    const base64Data = data.replace(/^data:image\/\w+;base64,/, '');
-    const blob = new Blob([Buffer.from(base64Data, 'base64')], { type: 'image/png' });
+    const match = data.match(/^data:(image\/[\w.+-]+);base64,([\s\S]*)$/);
+    if (!match) throw new Error('ToAPIs 参考图必须是 data URL 或公网 URL');
+    const [, mimeType, base64Data] = match;
+    const extension = mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png';
+    const blob = new Blob([Buffer.from(base64Data, 'base64')], { type: mimeType });
     const formData = new FormData();
-    formData.append('file', blob, 'image.png');
-    formData.append('purpose', 'generation');
+    formData.append('file', blob, `reference.${extension}`);
 
     let lastError = '';
     for (const endpoint of this.endpoints('/uploads/images')) {
@@ -120,9 +183,6 @@ export class RelayAdapter extends AIServiceAdapter {
     let lastError = '';
 
     while (Date.now() - startedAt < TASK_POLL_TIMEOUT_MS) {
-      // 文档建议轮询间隔 5-10 秒并加入随机抖动
-      await this.sleep(TASK_POLL_INTERVAL_MS + Math.random() * 1000);
-
       for (const endpoint of this.endpoints(`/images/generations/${taskId}`)) {
         const response = await fetch(endpoint, {
           method: 'GET',
@@ -153,6 +213,9 @@ export class RelayAdapter extends AIServiceAdapter {
         // 路由不存在时尝试候选地址；其余错误（429/5xx）视为任务仍在处理中
         if (response.status !== 404 && response.status !== 405) break;
       }
+
+      // 第一次查询立即执行，后续查询按文档建议间隔 5-10 秒并加入抖动。
+      await this.sleep(TASK_POLL_INTERVAL_MS + Math.random() * 1000);
     }
 
     throw new Error(
@@ -163,12 +226,23 @@ export class RelayAdapter extends AIServiceAdapter {
   /**
    * 解析异步任务完成后的结果（ToAPI: result.data[].url）
    */
-  private parseTaskResult(data: any): string[] {
-    if (Array.isArray(data?.result?.data)) {
-      const images = data.result.data
-        .map((item: any) => item?.url || item?.b64_json)
+  private parseTaskResult(data: unknown): string[] {
+    const root = asRecord(data);
+    const result = asRecord(root.result);
+    if (Array.isArray(result.data)) {
+      const images = result.data
+        .map((item: unknown) => {
+          const record = asRecord(item);
+          return record.url || record.b64_json;
+        })
         .filter((value: unknown): value is string => typeof value === 'string' && value.length > 0);
       if (images.length > 0) return images;
+    }
+    if (typeof result.url === 'string' && result.url.length > 0) {
+      return [result.url];
+    }
+    if (typeof root.url === 'string' && root.url.length > 0) {
+      return [root.url];
     }
     // 部分中转站的轮询结果直接是标准 OpenAI 格式
     return this.parseImageResponse(data);
@@ -179,7 +253,7 @@ export class RelayAdapter extends AIServiceAdapter {
    */
   async testConnection(): Promise<boolean> {
     try {
-      if (this.relayType === 'openai') {
+      if (this.relayType === 'openai' || this.relayType === 'toapis') {
         return await this.testOpenAIRelay();
       } else {
         return await this.testSDRelay();
@@ -231,7 +305,7 @@ export class RelayAdapter extends AIServiceAdapter {
    * 文生图
    */
   async textToImage(params: TextToImageParams): Promise<string[]> {
-    if (this.relayType === 'openai') {
+    if (this.relayType === 'openai' || this.relayType === 'toapis') {
       return await this.textToImageOpenAI(params);
     } else {
       return await this.textToImageSD(params);
@@ -245,14 +319,15 @@ export class RelayAdapter extends AIServiceAdapter {
   private async textToImageOpenAI(params: TextToImageParams): Promise<string[]> {
     try {
       const isToAPI = this.isToAPI();
-      const body = JSON.stringify({
-        model: this.config.model || 'dall-e-3',
-        prompt: params.prompt,
-        n: params.samples,
-        // ToAPI 要求比例+分辨率参数，标准 OpenAI 兼容接口为像素尺寸
-        ...(isToAPI ? this.toAPISize(params.width, params.height) : { size: `${params.width}x${params.height}` }),
-        response_format: 'url',
-      });
+      const body = JSON.stringify(isToAPI
+        ? this.toAPIModelPayload(params)
+        : {
+            model: this.config.model || 'dall-e-3',
+            prompt: params.prompt,
+            n: params.samples,
+            size: `${params.width}x${params.height}`,
+            response_format: 'url',
+          });
       const endpoints = this.imageEndpoints('generations');
       let lastError = '';
 
@@ -299,15 +374,19 @@ export class RelayAdapter extends AIServiceAdapter {
     }
   }
 
-  private parseImageResponse(data: any): string[] {
-    if (Array.isArray(data?.data)) {
-      const images = data.data
-        .map((item: any) => item?.url || (item?.b64_json ? `data:image/png;base64,${item.b64_json}` : null))
+  private parseImageResponse(data: unknown): string[] {
+    const root = asRecord(data);
+    if (Array.isArray(root.data)) {
+      const images = root.data
+        .map((item: unknown) => {
+          const record = asRecord(item);
+          return record.url || (record.b64_json ? `data:image/png;base64,${record.b64_json}` : null);
+        })
         .filter((value: unknown): value is string => typeof value === 'string' && value.length > 0);
       if (images.length > 0) return images;
     }
-    if (Array.isArray(data?.images)) {
-      const images = data.images
+    if (Array.isArray(root.images)) {
+      const images = root.images
         .filter((value: unknown): value is string => typeof value === 'string' && value.length > 0)
         .map((value: string) => value.startsWith('data:') ? value : `data:image/png;base64,${value}`);
       if (images.length > 0) return images;
@@ -365,7 +444,7 @@ export class RelayAdapter extends AIServiceAdapter {
    * 图生图
    */
   async imageToImage(params: ImageToImageParams): Promise<string[]> {
-    if (this.relayType === 'openai') {
+    if (this.relayType === 'openai' || this.relayType === 'toapis') {
       return await this.imageToImageOpenAI(params);
     } else {
       return await this.imageToImageSD(params);
@@ -406,7 +485,7 @@ export class RelayAdapter extends AIServiceAdapter {
       }
 
       const data = await response.json();
-      return data.data.map((item: any) => item.url);
+      return this.parseImageResponse(data);
     } catch (error) {
       console.error('[Relay-OpenAI] Image-to-image failed:', error);
       throw error;
@@ -424,14 +503,13 @@ export class RelayAdapter extends AIServiceAdapter {
         imageUrl = await this.uploadImage(imageUrl);
       }
 
-      const body = JSON.stringify({
-        model: this.config.model || 'gpt-image-2',
+      const body = JSON.stringify(this.toAPIModelPayload({
         prompt: params.prompt,
-        n: params.samples,
-        image_urls: [imageUrl],
-        ...this.toAPISize(params.width, params.height),
-        response_format: 'url',
-      });
+        samples: params.samples,
+        width: params.width,
+        height: params.height,
+        imageUrl,
+      }));
       let lastError = '';
 
       for (const endpoint of this.endpoints('/images/generations')) {

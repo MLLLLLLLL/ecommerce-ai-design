@@ -22,6 +22,9 @@ export function createAIService(config: AIServiceConfig): AIServiceAdapter {
     case 'relay':
       return new RelayAdapter(config);
 
+    case 'toapis':
+      return new RelayAdapter({ ...config, provider: 'relay', relayType: 'toapis' });
+
     default:
       throw new Error(`Unknown provider: ${config.provider}`);
   }
@@ -45,7 +48,7 @@ export function validateConfig(config: Partial<AIServiceConfig>): string[] {
     errors.push('API Key is required');
   }
 
-  if (config.provider === 'relay' && !config.baseURL) {
+  if ((config.provider === 'relay' || config.provider === 'toapis') && !config.baseURL) {
     errors.push('Base URL is required for relay provider');
   }
 

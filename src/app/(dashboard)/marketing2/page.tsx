@@ -5,6 +5,8 @@ import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { WorkflowCardGrid } from '@/components/marketing2/WorkflowCardGrid';
+import { Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   marketing2Api,
   type RunSummary,
@@ -31,6 +33,19 @@ export default function Marketing2Page() {
   const [recentRuns, setRecentRuns] = useState<RunSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const handleDeleteDraft = async (run: RunSummary) => {
+    if (run.status !== 'draft') return;
+    if (!window.confirm(`确定删除草稿“${run.title}”吗？删除后不可恢复。`)) return;
+
+    try {
+      await marketing2Api.deleteRun(run.id);
+      setRecentRuns((current) => current.filter((item) => item.id !== run.id));
+      setWorkflows(await marketing2Api.workflows());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '删除草稿失败');
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -70,17 +85,28 @@ export default function Marketing2Page() {
 
       {recentRuns.length > 0 && (
         <div className="space-y-2">
-          <h2 className="text-sm font-medium text-muted-foreground">最近任务</h2>
+            <h2 className="text-sm font-medium text-muted-foreground">最近任务</h2>
           <div className="flex flex-wrap gap-2">
             {recentRuns.map((run) => (
-              <Link
-                key={run.id}
-                href={`/marketing2/${run.workflowKey}?runId=${run.id}`}
-                className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-accent"
-              >
-                <span className="max-w-40 truncate">{run.title}</span>
-                <Badge variant="secondary">{RUN_STATUS_LABELS[run.status] ?? run.status}</Badge>
-              </Link>
+              <div key={run.id} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-accent">
+                <Link href={`/marketing2/${run.workflowKey}?runId=${run.id}`} className="flex min-w-0 items-center gap-2">
+                  <span className="max-w-40 truncate">{run.title}</span>
+                  <Badge variant="secondary">{RUN_STATUS_LABELS[run.status] ?? run.status}</Badge>
+                </Link>
+                {run.status === 'draft' && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    title="删除草稿"
+                    aria-label={`删除草稿 ${run.title}`}
+                    onClick={() => void handleDeleteDraft(run)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </div>
             ))}
           </div>
         </div>

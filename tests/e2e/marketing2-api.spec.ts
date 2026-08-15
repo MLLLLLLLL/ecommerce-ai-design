@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 
 // ============================================
 // 营销助手2 API 契约测试（V2 12.2）
@@ -28,9 +29,11 @@ async function uploadTinyPng(request: import('@playwright/test').APIRequestConte
 
 async function createDraft(
   request: import('@playwright/test').APIRequestContext,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  idempotencyKey = `api-test-create-${randomUUID()}`
 ) {
   return request.post('/api/marketing2/runs', {
+    headers: { 'Idempotency-Key': idempotencyKey },
     data: { workflowKey: WORKFLOW, input, stepModels: {} },
   });
 }
@@ -48,6 +51,7 @@ test.describe('API 契约', () => {
 
   test('stepModels 内嵌套密钥同样拒绝', async ({ request }) => {
     const response = await request.post('/api/marketing2/runs', {
+      headers: { 'Idempotency-Key': 'api-test-forbidden-step-models' },
       data: {
         workflowKey: WORKFLOW,
         input: { productImages: ['/api/files/user-data/marketing/x.png'] },
@@ -61,6 +65,7 @@ test.describe('API 契约', () => {
 
   test('非法 workflowKey 返回 404', async ({ request }) => {
     const response = await request.post('/api/marketing2/runs', {
+      headers: { 'Idempotency-Key': 'api-test-invalid-workflow' },
       data: { workflowKey: 'not-a-workflow', input: {}, stepModels: {} },
     });
     expect(response.status()).toBe(404);
@@ -74,6 +79,66 @@ test.describe('API 契约', () => {
     const body = await response.json();
     expect(body.error.code).toBe('INPUT_INVALID');
     expect(body.error.fieldErrors).toBeTruthy();
+  });
+
+  test('创建缺少 Idempotency-Key 返回 400', async ({ request }) => {
+    const response = await request.post('/api/marketing2/runs', {
+      data: {
+        workflowKey: WORKFLOW,
+        input: { productImages: ['/api/files/user-data/marketing/x.png'] },
+        stepModels: {},
+      },
+    });
+    expect(response.status()).toBe(400);
+    const body = await response.json();
+    expect(body.error.code).toBe('IDEMPOTENCY_KEY_MISSING');
+  });
+
+  test('重复创建同一幂等键复用同一草稿', async ({ request }) => {
+    const idempotencyKey = 'api-test-create-deduplication';
+    const data = {
+      workflowKey: WORKFLOW,
+      input: { productImages: ['/api/files/user-data/marketing/x.png'] },
+      stepModels: {},
+    };
+
+    const [first, second] = await Promise.all([
+      request.post('/api/marketing2/runs', {
+        headers: { 'Idempotency-Key': idempotencyKey },
+        data,
+      }),
+      request.post('/api/marketing2/runs', {
+        headers: { 'Idempotency-Key': idempotencyKey },
+        data,
+      }),
+    ]);
+    expect(first.status()).toBe(201);
+    expect(second.status()).toBe(201);
+    const firstBody = await first.json();
+    const secondBody = await second.json();
+    expect(secondBody.task.id).toBe(firstBody.task.id);
+  });
+
+  test('明确请求后可强制删除已执行任务', async ({ request }) => {
+    const created = await createDraft(request, {
+      productImages: ['/api/files/user-data/marketing/x.png'],
+    });
+    const { task } = await created.json();
+
+    const executed = await request.post(
+      `/api/marketing2/runs/${task.id}/steps/material_validate/execute`,
+      {
+        headers: { 'Idempotency-Key': `api-test-force-delete-${randomUUID()}` },
+        data: { expectedVersion: task.taskVersion },
+      }
+    );
+    expect(executed.status()).toBe(200);
+
+    const deleted = await request.delete(`/api/marketing2/runs/${task.id}?force=true`);
+    expect(deleted.status()).toBe(200);
+
+    const missing = await request.get(`/api/marketing2/runs/${task.id}`);
+    expect(missing.status()).toBe(404);
   });
 
   test('PATCH 版本冲突返回 VERSION_CONFLICT', async ({ request }) => {

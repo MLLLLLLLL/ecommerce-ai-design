@@ -96,6 +96,21 @@ describe('completeJSON', () => {
     expect(client.callCount).toBe(2);
   });
 
+  it('repair 模式：Schema 不匹配时也修复一次', async () => {
+    const client = new MockTextCompletionClient();
+    client.setScenarioQueue([
+      { kind: 'success', content: '{"name":"杯"}' },
+      { kind: 'success', content: '{"name":"杯","count":1}' },
+    ]);
+    const result = await completeJSON(client, { messages: [] }, testSchema, {
+      label: '测试',
+      repair: true,
+    });
+    expect(result).toEqual({ name: '杯', count: 1 });
+    expect(client.callCount).toBe(2);
+    expect(client.lastRequest?.messages[1]?.content).toContain('当前结构问题');
+  });
+
   it('repair 失败后仍抛出 invalid_json', async () => {
     const client = new MockTextCompletionClient().setScenario({ kind: 'invalid-json' });
     await expect(

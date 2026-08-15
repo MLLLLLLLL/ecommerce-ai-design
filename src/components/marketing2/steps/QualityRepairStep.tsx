@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Maximize2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,6 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { getAssetUrl } from '@/lib/utils';
+import { ImagePreviewDialog, type PreviewImage } from '@/components/marketing2/ImagePreviewDialog';
 import type { RunDetail } from '@/components/marketing2/hooks/use-marketing2-run';
 
 // ============================================
@@ -68,6 +70,7 @@ export function QualityRepairStep({
   busy: boolean;
 }) {
   const [selectedRepairs, setSelectedRepairs] = useState<Record<string, string>>({});
+  const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
 
   const checkItems = detail.items.filter((item) => item.kind.startsWith('quality_check:'));
   const repairItems = detail.items.filter((item) => item.kind.startsWith('repair:'));
@@ -97,12 +100,19 @@ export function QualityRepairStep({
               <div key={item.id} className="space-y-3 rounded-md border p-3">
                 <div className="flex flex-wrap items-center gap-3">
                   {asset && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={getAssetUrl(asset.filepath)}
-                      alt={asset.filename}
-                      className="h-16 w-16 rounded border object-cover"
-                    />
+                    <button
+                      type="button"
+                      className="group relative h-16 w-16 shrink-0 overflow-hidden rounded border focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                      aria-label={`查看${asset.filename}原图`}
+                      title="查看原图"
+                      onClick={() => setPreviewImage({ src: getAssetUrl(asset.filepath), title: asset.filename })}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={getAssetUrl(asset.filepath)} alt={asset.filename} className="h-full w-full object-cover" />
+                      <span className="absolute right-1 top-1 rounded bg-black/65 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                        <Maximize2 className="h-3 w-3" />
+                      </span>
+                    </button>
                   )}
                   <div className="flex-1 space-y-1">
                     <p className="text-sm font-medium">{asset?.filename ?? assetId.slice(0, 8)}</p>
@@ -222,8 +232,19 @@ export function QualityRepairStep({
               return (
                 <div key={item.id} className="space-y-1">
                   {item.status === 'completed' && result?.url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={result.url} alt="返修结果" className="h-24 w-24 rounded border object-cover" />
+                    <button
+                      type="button"
+                      className="group relative h-24 w-24 overflow-hidden rounded border focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                      aria-label="查看返修结果原图"
+                      title="查看原图"
+                      onClick={() => setPreviewImage({ src: result.url!, title: '返修结果' })}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={result.url} alt="返修结果" className="h-full w-full object-cover" />
+                      <span className="absolute right-1 top-1 rounded bg-black/65 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                        <Maximize2 className="h-3 w-3" />
+                      </span>
+                    </button>
                   ) : (
                     <div className="flex h-24 w-24 items-center justify-center rounded border text-xs text-muted-foreground">
                       {item.status === 'failed' ? '返修失败' : '返修中...'}
@@ -240,6 +261,7 @@ export function QualityRepairStep({
           </div>
         </section>
       )}
+      <ImagePreviewDialog image={previewImage} onOpenChange={(open) => { if (!open) setPreviewImage(null); }} />
     </div>
   );
 }

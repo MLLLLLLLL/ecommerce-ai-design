@@ -3,6 +3,7 @@ import {
   getWorkflow,
   ITEM_KINDS,
   mainImageItemKind,
+  promptPlanItemKind,
   parseItemKind,
   qualityCheckItemKind,
   repairItemKind,
@@ -83,6 +84,12 @@ describe('workflow registry', () => {
     expect(qualityCheckItemKind('a1')).toBe('quality_check:a1');
     expect(repairItemKind('a1', 'text_garbled')).toBe('repair:a1:text_garbled');
     expect(parseItemKind('main_image:3')).toEqual({ type: 'main_image', index: 3 });
+    expect(promptPlanItemKind('detail_page', 8)).toBe('prompt_plan:detail_page:8');
+    expect(parseItemKind('prompt_plan:detail_page:8')).toEqual({
+      type: 'prompt_plan',
+      kind: 'detail_page',
+      index: 8,
+    });
     expect(parseItemKind('repair:a1:text_garbled')).toEqual({
       type: 'repair',
       assetId: 'a1',

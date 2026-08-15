@@ -4,13 +4,14 @@
 
 export interface AIServiceConfig {
   id: string;
-  provider: 'openai' | 'alibaba' | 'relay';
+  provider: 'openai' | 'alibaba' | 'relay' | 'toapis';
   name: string;
   apiKey: string;
   baseURL?: string;
   model?: string;
   apiProtocol?: 'chat_completions' | 'responses';
-  relayType?: 'openai' | 'sd';
+  /** 中转站协议；toapis 使用异步生成任务和公网参考图 URL。 */
+  relayType?: 'openai' | 'sd' | 'toapis';
   maxConcurrent?: number;
 }
 

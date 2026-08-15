@@ -57,6 +57,7 @@ export function toModelConfigSummary(config: ModelConfig): ModelConfigSummary {
     id: config.id,
     name: config.name,
     provider: config.provider,
+    relayType: config.relayType as ModelConfigSummary['relayType'],
     baseURL: config.baseURL,
     model: config.model,
     apiProtocol: toTextModelApiProtocol(config.apiProtocol),
@@ -79,6 +80,7 @@ export function toRuntimeAIConfig(config: ModelConfig): AIServiceConfig {
     name: config.name,
     // 保留服务端保存的提供商；否则中转站图片模型会被误建成 OpenAI 直连适配器。
     provider: config.provider as AIServiceConfig['provider'],
+    relayType: config.relayType as AIServiceConfig['relayType'],
     baseURL: config.baseURL,
     model: config.model,
     apiProtocol: toTextModelApiProtocol(config.apiProtocol),

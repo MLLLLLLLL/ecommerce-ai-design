@@ -62,7 +62,13 @@ export interface CreateMarketing2RunRequest {
   stepModels: Record<string, unknown>;
 }
 
-export async function createRun(userId: string, rawRequest: unknown) {
+export async function createRun(userId: string, rawRequest: unknown, idempotencyKey: string) {
+  if (!idempotencyKey.trim()) {
+    throw new Marketing2Error('IDEMPOTENCY_KEY_MISSING', '请求必须携带 Idempotency-Key', {
+      httpStatus: 400,
+    });
+  }
+
   const parsed = createRunSchema.safeParse(rawRequest);
   if (!parsed.success) {
     throw new Marketing2Error('INPUT_INVALID', '创建请求格式不正确', {
@@ -70,6 +76,16 @@ export async function createRun(userId: string, rawRequest: unknown) {
     });
   }
   const request = parsed.data;
+
+  const existing = await prisma.marketingTask.findUnique({
+    where: {
+      userId_createIdempotencyKey: {
+        userId,
+        createIdempotencyKey: idempotencyKey,
+      },
+    },
+  });
+  if (existing) return existing;
 
   const workflow = getWorkflow(request.workflowKey);
   if (!workflow) {
@@ -99,24 +115,40 @@ export async function createRun(userId: string, rawRequest: unknown) {
 
   const firstStep = workflow.steps[0];
 
-  const task = await prisma.marketingTask.create({
-    data: {
-      userId,
-      module: MARKETING2_MODULE,
-      workflowKey: workflow.key,
-      workflowVersion: request.workflowVersion ?? workflow.version,
-      productName: request.title ?? productName,
-      productImages,
-      platform,
-      language,
-      input: input as Prisma.InputJsonValue,
-      stepModels: request.stepModels as Prisma.InputJsonValue,
-      stepResults: {},
-      currentStep: firstStep.key,
-      taskVersion: 1,
-      status: 'draft',
-    },
-  });
+  let task: MarketingTask;
+  try {
+    task = await prisma.marketingTask.create({
+      data: {
+        userId,
+        module: MARKETING2_MODULE,
+        workflowKey: workflow.key,
+        workflowVersion: request.workflowVersion ?? workflow.version,
+        productName: request.title ?? productName,
+        productImages,
+        platform,
+        language,
+        input: input as Prisma.InputJsonValue,
+        stepModels: request.stepModels as Prisma.InputJsonValue,
+        stepResults: {},
+        currentStep: firstStep.key,
+        taskVersion: 1,
+        status: 'draft',
+        createIdempotencyKey: idempotencyKey,
+      },
+    });
+  } catch (error) {
+    if ((error as { code?: string }).code !== 'P2002') throw error;
+    const duplicate = await prisma.marketingTask.findUnique({
+      where: {
+        userId_createIdempotencyKey: {
+          userId,
+          createIdempotencyKey: idempotencyKey,
+        },
+      },
+    });
+    if (!duplicate) throw error;
+    return duplicate;
+  }
 
   await appendTaskEvent(task.id, userId, 'workflow_created', {
     workflowKey: workflow.key,
@@ -218,6 +250,16 @@ export async function updateRun(userId: string, taskId: string, rawBody: unknown
   }
 
   return prisma.marketingTask.findUniqueOrThrow({ where: { id: taskId } });
+}
+
+/** 删除任务；强制删除仅用于用户明确确认的历史清理。 */
+export async function deleteRun(userId: string, taskId: string, force = false): Promise<void> {
+  const task = await findOwnedTask(userId, taskId);
+  if (task.status !== 'draft' && !force) {
+    throw new Marketing2Error('TASK_STATE_INVALID', '只有草稿任务可以删除', { httpStatus: 409 });
+  }
+
+  await prisma.marketingTask.delete({ where: { id: taskId } });
 }
 
 async function validateDraftModels(userId: string, rawModels: unknown, workflowVersion: number): Promise<void> {

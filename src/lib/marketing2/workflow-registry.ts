@@ -251,7 +251,12 @@ export const ITEM_KINDS = {
   backgroundCleanup: 'background_cleanup',
   visualAnalysis: 'visual_analysis',
   promptPlanning: 'prompt_planning',
+  promptOutline: 'prompt_outline',
 } as const;
+
+export function promptPlanItemKind(kind: 'main_image' | 'detail_page', index: number): string {
+  return `prompt_plan:${kind}:${index}`;
+}
 
 export function mainImageItemKind(index: number): string {
   return `main_image:${index}`;
@@ -271,6 +276,7 @@ export function repairItemKind(assetId: string, issueType: string): string {
 
 export function parseItemKind(kind: string):
   | { type: 'main_image' | 'detail_page'; index: number }
+  | { type: 'prompt_plan'; kind: 'main_image' | 'detail_page'; index: number }
   | { type: 'quality_check'; assetId: string }
   | { type: 'repair'; assetId: string; issueType: string }
   | { type: 'simple'; key: string } {
@@ -279,6 +285,12 @@ export function parseItemKind(kind: string):
   }
   if (kind.startsWith('detail_page:')) {
     return { type: 'detail_page', index: Number(kind.slice('detail_page:'.length)) };
+  }
+  if (kind.startsWith('prompt_plan:')) {
+    const [, planKind, rawIndex] = kind.split(':');
+    if (planKind === 'main_image' || planKind === 'detail_page') {
+      return { type: 'prompt_plan', kind: planKind, index: Number(rawIndex) };
+    }
   }
   if (kind.startsWith('quality_check:')) {
     return { type: 'quality_check', assetId: kind.slice('quality_check:'.length) };

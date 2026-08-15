@@ -17,6 +17,7 @@ const capabilitiesSchema = z.object({
 const updateModelSchema = z.object({
   name: z.string().trim().min(1).max(80),
   provider: z.string().trim().min(1).max(40).default('openai'),
+  relayType: z.enum(['openai', 'sd', 'toapis']).optional(),
   baseURL: z.url().max(500),
   apiKey: z.string().trim().max(2000).optional(),
   model: z.string().trim().min(1).max(160),
@@ -50,6 +51,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         data: {
           name: body.name,
           provider: body.provider,
+          relayType: body.relayType,
           baseURL: body.baseURL.replace(/\/+$/, ''),
           model: body.model,
           apiProtocol: body.apiProtocol,

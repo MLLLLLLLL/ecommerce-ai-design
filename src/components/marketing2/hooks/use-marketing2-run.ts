@@ -53,6 +53,7 @@ export interface RunItemApi {
   input: Record<string, unknown> | null;
   result: Record<string, unknown> | null;
   error: string | null;
+  startedAt: string | null;
   createdAt: string;
 }
 
@@ -69,11 +70,13 @@ export interface RunDetail {
     taskVersion: number;
     awaitingReview: boolean;
     pausedAt: string | null;
+    cancelRequestedAt: string | null;
     error: string | null;
     input: Record<string, unknown> | null;
     workflowVersion: number;
     stepModels: Record<string, unknown> | null;
     stepResults: Record<string, { approved?: boolean; skipped?: boolean; reason?: string; result?: Record<string, unknown> }> | null;
+    updatedAt: string;
   };
   items: RunItemApi[];
   assets: { id: string; filename: string; filepath: string; stepKey: string | null; parentAssetId: string | null; revision: number; createdAt: string }[];
@@ -132,8 +135,8 @@ export const marketing2Api = {
     input: unknown;
     stepModels: Record<string, unknown>;
     title?: string;
-  }) =>
-    request<{ task: { id: string } }>('/api/marketing2/runs', jsonInit('POST', body)).then(
+  }, idempotencyKey = crypto.randomUUID()) =>
+    request<{ task: { id: string } }>('/api/marketing2/runs', jsonInit('POST', body, idempotencyKey)).then(
       (d) => d.task
     ),
   detail: (runId: string) =>
@@ -142,6 +145,8 @@ export const marketing2Api = {
     runId: string,
     body: { expectedVersion: number; input?: unknown; stepModels?: Record<string, unknown>; title?: string }
   ) => request<{ task: RunDetail['task'] }>(`/api/marketing2/runs/${runId}`, jsonInit('PATCH', body)),
+  deleteRun: (runId: string) =>
+    request<{ success: true }>(`/api/marketing2/runs/${runId}`, { method: 'DELETE' }),
   patchModelSelections: (
     runId: string,
     body: { expectedVersion: number; changes: { scopeKey: string; modelId: string }[] }
@@ -182,6 +187,10 @@ export const marketing2Api = {
     request<{ task: RunDetail['task'] }>(`/api/marketing2/runs/${runId}/pause`, jsonInit('POST', {})),
   resume: (runId: string) =>
     request<{ task: RunDetail['task'] }>(`/api/marketing2/runs/${runId}/resume`, jsonInit('POST', {})),
+  cancel: (runId: string) =>
+    request<{ task: RunDetail['task'] }>(`/api/marketing2/runs/${runId}/cancel`, jsonInit('POST', {})),
+  forceCancel: (runId: string) =>
+    request<{ task: RunDetail['task'] }>(`/api/marketing2/runs/${runId}/force-cancel`, jsonInit('POST', {})),
   exportRun: (runId: string, format: string) =>
     request<{ assetId: string; url: string; filename: string }>(
       `/api/marketing2/runs/${runId}/export`,

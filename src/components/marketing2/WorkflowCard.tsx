@@ -33,6 +33,8 @@ export function WorkflowCard({ workflow }: { workflow: WorkflowCardApi }) {
 
   return (
     <Card
+      data-testid="workflow-card"
+      data-workflow-key={workflow.key}
       className={`flex h-full flex-col transition-shadow ${disabled ? 'opacity-60' : 'hover:shadow-md'}`}
     >
       <CardHeader className="pb-2">

@@ -47,6 +47,20 @@ describe('AI Service Factory', () => {
       expect(adapter).toBeInstanceOf(RelayAdapter);
     });
 
+    it('should create the dedicated ToAPIs adapter through the provider option', () => {
+      const adapter = createAIService({
+        id: 'test-toapis',
+        provider: 'toapis',
+        name: 'ToAPIs Test',
+        apiKey: 'test-key',
+        baseURL: 'https://toapis.com/v1',
+        model: 'gpt-image-2',
+      });
+
+      expect(adapter).toBeInstanceOf(RelayAdapter);
+      expect(adapter.getConfig().relayType).toBe('toapis');
+    });
+
     it('should throw error for unknown provider', () => {
       const config = {
         id: 'test-4',

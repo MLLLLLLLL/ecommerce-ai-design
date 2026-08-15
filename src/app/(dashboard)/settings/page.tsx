@@ -38,11 +38,42 @@ import {
 } from '@/types/model-config';
 import { generateId } from '@/lib/utils';
 
+const TOAPIS_DEFAULT_BASE_URL = 'https://toapis.com/v1';
+const TOAPIS_DEFAULT_MODEL = 'gpt-image-2';
+
 const IMAGE_PROVIDER_BASE_URLS = {
   openai: 'https://api.openai.com/v1',
   alibaba: 'https://dashscope.aliyuncs.com/api/v1',
   relay: '',
+  toapis: TOAPIS_DEFAULT_BASE_URL,
 } as const;
+
+function modelTestKinds(capabilities?: ModelCapabilities): string[] {
+  const kinds = ['connection'];
+  if (capabilities?.jsonMode) kinds.push('jsonMode');
+  if (capabilities?.vision) kinds.push('vision');
+  if (capabilities?.imageGeneration) kinds.push('imageGeneration');
+  if (capabilities?.imageEditing) kinds.push('imageEditing');
+  if (capabilities?.referenceImage) kinds.push('referenceImage');
+  return kinds;
+}
+
+function ModelTestStatus({ model }: { model?: ModelConfigSummary }) {
+  if (!model) return <Badge variant="destructive">未同步到营销助手</Badge>;
+  if (!model.testStatus) return <Badge variant="outline">待实测</Badge>;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        {model.testStatus === 'passed' && <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">实测通过</Badge>}
+        {model.testStatus === 'partial' && <Badge variant="secondary" className="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">实测部分通过</Badge>}
+        {model.testStatus === 'failed' && <Badge variant="destructive">实测未通过</Badge>}
+        {model.lastTestedAt && <span className="text-xs text-muted-foreground">{new Date(model.lastTestedAt).toLocaleString()}</span>}
+      </div>
+      {model.testError && <p className="break-all text-xs text-destructive">{model.testError}</p>}
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const { services, addService, updateService, deleteService } =
@@ -129,13 +160,7 @@ export default function SettingsPage() {
 
     // 按声明能力选择实测项：能力未知或未实测按不可用处理（V2 5.3）
     const model = textModels.find((item) => item.id === modelId);
-    const capabilities = model?.capabilities;
-    const kinds: string[] = ['connection'];
-    if (capabilities?.jsonMode) kinds.push('jsonMode');
-    if (capabilities?.vision) kinds.push('vision');
-    if (capabilities?.imageGeneration) kinds.push('imageGeneration');
-    if (capabilities?.imageEditing) kinds.push('imageEditing');
-    if (capabilities?.referenceImage) kinds.push('referenceImage');
+    const kinds = modelTestKinds(model?.capabilities);
 
     setTextTesting(true);
     try {
@@ -178,15 +203,16 @@ export default function SettingsPage() {
     }
     setMigrating(true);
     try {
-      const payload: { name: string; provider: 'openai' | 'alibaba' | 'relay'; baseURL?: string; model?: string; apiKey: string }[] = [];
+      const payload: { name: string; provider: 'openai' | 'alibaba' | 'relay' | 'toapis'; relayType?: 'openai' | 'sd' | 'toapis'; baseURL?: string; model?: string; apiKey: string }[] = [];
       for (const service of services) {
         const resolved = useConfigStore.getState().getServiceById(service.id);
         if (!resolved?.apiKey) continue;
         payload.push({
           name: resolved.name,
           provider: resolved.provider,
+          relayType: resolved.relayType,
           baseURL: resolved.baseURL,
-          model: resolved.model,
+          model: resolved.model || (resolved.provider === 'toapis' || resolved.relayType === 'toapis' ? TOAPIS_DEFAULT_MODEL : undefined),
           apiKey: resolved.apiKey,
         });
       }
@@ -235,9 +261,10 @@ export default function SettingsPage() {
         body: JSON.stringify({
           name: config.name,
           provider: config.provider,
+          relayType: config.provider === 'relay' || config.provider === 'toapis' ? config.relayType : undefined,
           baseURL: config.baseURL.trim(),
           apiKey: config.apiKey,
-          model: config.model || config.name,
+          model: config.model || (config.provider === 'toapis' || config.relayType === 'toapis' ? TOAPIS_DEFAULT_MODEL : config.name),
           apiProtocol: 'chat_completions',
           capabilities,
           isActive: true,
@@ -330,12 +357,12 @@ export default function SettingsPage() {
   };
 
   const [formData, setFormData] = useState({
-    provider: 'openai' as 'openai' | 'alibaba' | 'relay',
+    provider: 'openai' as 'openai' | 'alibaba' | 'relay' | 'toapis',
     name: '',
     apiKey: '',
     baseURL: '',
     model: '',
-    relayType: 'openai' as 'openai' | 'sd',
+    relayType: 'openai' as 'openai' | 'sd' | 'toapis',
     maxConcurrent: 50,
   });
 
@@ -348,8 +375,8 @@ export default function SettingsPage() {
         name: service.name,
         apiKey: resolved?.apiKey ?? '',
         baseURL: service.baseURL || IMAGE_PROVIDER_BASE_URLS[service.provider],
-        model: service.model || '',
-        relayType: service.relayType || 'openai',
+        model: service.model || (service.relayType === 'toapis' ? TOAPIS_DEFAULT_MODEL : ''),
+        relayType: service.relayType || (service.provider === 'toapis' ? 'toapis' : 'openai'),
         maxConcurrent: service.maxConcurrent || 50,
       });
     } else {
@@ -379,8 +406,8 @@ export default function SettingsPage() {
       name: formData.name.trim(),
       apiKey: formData.apiKey.trim(),
       baseURL: formData.baseURL.trim() || undefined,
-      model: formData.model.trim() || undefined,
-      relayType: formData.provider === 'relay' ? formData.relayType : undefined,
+      model: formData.model.trim() || (formData.provider === 'toapis' || formData.relayType === 'toapis' ? TOAPIS_DEFAULT_MODEL : undefined),
+      relayType: formData.provider === 'relay' || formData.provider === 'toapis' ? formData.relayType : undefined,
       maxConcurrent: formData.maxConcurrent,
     };
 
@@ -405,22 +432,34 @@ export default function SettingsPage() {
   const handleTestConnection = async (service: AIServiceConfig) => {
     setTestingId(service.id);
     try {
-      const response = await fetch('/api/ai/test-connection', {
+      const serverModel = textModels.find((model) => model.name === service.name);
+      if (!serverModel) {
+        throw new Error('该图片模型尚未同步到营销助手，请先编辑并保存');
+      }
+
+      const response = await fetch(`/api/model-configs/${serverModel.id}/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(service),
+        body: JSON.stringify({ kinds: modelTestKinds(serverModel.capabilities) }),
       });
 
       const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || '图片模型实测失败');
 
-      if (data.success) {
-        toast.success('连接成功！');
+      const report = data.data?.report ?? {};
+      const evaluated = Object.keys(report);
+      const passedCount = evaluated.filter((kind) => report[kind]?.passed).length;
+      if (passedCount === evaluated.length) {
+        toast.success(`图片模型实测通过（${passedCount}/${evaluated.length}）`);
+      } else if (passedCount === 0) {
+        toast.error('图片模型实测未通过，请查看卡片上的测试摘要');
       } else {
-        toast.error(data.error || '连接失败');
+        toast.warning(`图片模型部分通过（${passedCount}/${evaluated.length}）`);
       }
+      await loadTextModels();
     } catch (error) {
-      console.error('Test connection error:', error);
-      toast.error('连接测试失败');
+      console.error('Image model test error:', error);
+      toast.error(error instanceof Error ? error.message : '图片模型实测失败');
     } finally {
       setTestingId(null);
     }
@@ -447,7 +486,8 @@ export default function SettingsPage() {
     }
   };
 
-  const getProviderLabel = (provider: string) => {
+  const getProviderLabel = (provider: string, relayType?: AIServiceConfig['relayType']) => {
+    if (provider === 'relay' && relayType === 'toapis') return 'ToAPIs 中转站';
     switch (provider) {
       case 'openai':
         return 'OpenAI';
@@ -455,6 +495,8 @@ export default function SettingsPage() {
         return '阿里百炼';
       case 'relay':
         return '中转站';
+      case 'toapis':
+        return 'ToAPIs 中转站';
       default:
         return provider;
     }
@@ -511,8 +553,9 @@ export default function SettingsPage() {
             </Card>
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
-              {services.map((service) => (
-                <Card key={service.id}>
+              {services.map((service) => {
+                const serverModel = textModels.find((model) => model.name === service.name);
+                return <Card key={service.id}>
                   <CardHeader>
                     <div className="flex items-start justify-between">
                       <div className="space-y-1">
@@ -520,7 +563,7 @@ export default function SettingsPage() {
                           {service.name}
                         </CardTitle>
                         <Badge variant="outline">
-                          {getProviderLabel(service.provider)}
+                          {getProviderLabel(service.provider, service.relayType)}
                         </Badge>
                       </div>
                       <Button
@@ -553,6 +596,7 @@ export default function SettingsPage() {
                         {service.maxConcurrent || 50}
                       </span>
                     </div>
+                    <ModelTestStatus model={serverModel} />
                     <div className="flex gap-2">
                       <Button
                         variant="outline"
@@ -567,7 +611,7 @@ export default function SettingsPage() {
                             测试中...
                           </>
                         ) : (
-                          '测试连接'
+                          '实测能力'
                         )}
                       </Button>
                       <Button
@@ -580,8 +624,8 @@ export default function SettingsPage() {
                       </Button>
                     </div>
                   </CardContent>
-                </Card>
-              ))}
+                </Card>;
+              })}
             </div>
           )}
         </TabsContent>
@@ -635,15 +679,21 @@ export default function SettingsPage() {
                 value={formData.provider}
                 onValueChange={(value) =>
                   setFormData((current) => {
-                    const provider = value as 'openai' | 'alibaba' | 'relay';
+                    const provider = value as 'openai' | 'alibaba' | 'relay' | 'toapis';
                     const currentDefault = IMAGE_PROVIDER_BASE_URLS[current.provider];
+                    const isToAPIs = provider === 'toapis';
+                    const wasToAPIs = current.provider === 'toapis' || current.relayType === 'toapis';
                     return {
                       ...current,
                       provider,
+                      relayType: isToAPIs ? 'toapis' : 'openai',
                       baseURL:
-                        !current.baseURL || current.baseURL === currentDefault
+                        isToAPIs
+                          ? TOAPIS_DEFAULT_BASE_URL
+                          : !current.baseURL || current.baseURL === currentDefault || wasToAPIs
                           ? IMAGE_PROVIDER_BASE_URLS[provider]
                           : current.baseURL,
+                      model: isToAPIs ? TOAPIS_DEFAULT_MODEL : wasToAPIs ? '' : current.model,
                     };
                   })
                 }
@@ -655,6 +705,7 @@ export default function SettingsPage() {
                   <SelectItem value="openai">OpenAI (DALL-E)</SelectItem>
                   <SelectItem value="alibaba">阿里百炼（通义万相）</SelectItem>
                   <SelectItem value="relay">中转站</SelectItem>
+                  <SelectItem value="toapis">ToAPIs 中转站</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -700,7 +751,14 @@ export default function SettingsPage() {
                   <Select
                     value={formData.relayType}
                     onValueChange={(value) =>
-                      setFormData({ ...formData, relayType: value as 'openai' | 'sd' })
+                      setFormData((current) => ({
+                        ...current,
+                        relayType: value as 'openai' | 'sd' | 'toapis',
+                        baseURL: value === 'toapis' && (!current.baseURL || current.baseURL === IMAGE_PROVIDER_BASE_URLS.relay)
+                          ? TOAPIS_DEFAULT_BASE_URL
+                          : current.baseURL,
+                        model: value === 'toapis' && !current.model ? TOAPIS_DEFAULT_MODEL : current.model,
+                      }))
                     }
                   >
                     <SelectTrigger>
@@ -709,6 +767,7 @@ export default function SettingsPage() {
                     <SelectContent>
                       <SelectItem value="openai">OpenAI 格式</SelectItem>
                       <SelectItem value="sd">Stable Diffusion 格式</SelectItem>
+                      <SelectItem value="toapis">ToAPIs 异步图片格式</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -716,10 +775,12 @@ export default function SettingsPage() {
             )}
 
             <div className="space-y-2">
-              <Label>模型名（可选）</Label>
+              <Label>{formData.relayType === 'toapis' ? '模型名' : '模型名（可选）'}</Label>
               <Input
                 placeholder={
-                  formData.provider === 'openai'
+                  formData.relayType === 'toapis'
+                    ? '例如：gpt-image-2 / gemini-2.5-flash-image-preview'
+                    : formData.provider === 'openai'
                     ? 'dall-e-3'
                     : formData.provider === 'alibaba'
                       ? 'wanx-v1'
@@ -789,7 +850,7 @@ export default function SettingsPage() {
             {services.map((service) => (
               <div key={service.id} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
                 <span className="font-medium">{service.name}</span>
-                <span className="text-muted-foreground">{getProviderLabel(service.provider)}{service.model ? ` · ${service.model}` : ''}</span>
+                <span className="text-muted-foreground">{getProviderLabel(service.provider, service.relayType)}{service.model ? ` · ${service.model}` : ''}</span>
               </div>
             ))}
             {services.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">没有可迁移的配置</p>}

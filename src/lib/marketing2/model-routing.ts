@@ -154,5 +154,5 @@ export function createTextClient(model: ResolvedMarketing2Model): HttpTextComple
 
 /** 图片 Adapter（生成/编辑），由服务端解密配置构建，绝不接收浏览器配置。 */
 export function createImageAdapter(model: ResolvedMarketing2Model): AIServiceAdapter {
-  return createAIService({ ...model.runtimeConfig, provider: 'openai' });
+  return createAIService(model.runtimeConfig);
 }

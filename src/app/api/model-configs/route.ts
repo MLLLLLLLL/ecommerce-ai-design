@@ -17,6 +17,7 @@ const capabilitiesSchema = z.object({
 const createModelSchema = z.object({
   name: z.string().trim().min(1).max(80),
   provider: z.string().trim().min(1).max(40).default('openai'),
+  relayType: z.enum(['openai', 'sd', 'toapis']).optional(),
   baseURL: z.url().max(500),
   apiKey: z.string().trim().min(1).max(2000),
   model: z.string().trim().min(1).max(160),
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
           userId: user.id,
           name: body.name,
           provider: body.provider,
+          relayType: body.relayType,
           baseURL,
           model: body.model,
           apiProtocol: body.apiProtocol,

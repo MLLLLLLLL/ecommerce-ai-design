@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db/prisma';
 import { appendTaskEvent } from '@/lib/marketing/async/aggregation';
+import { maybeAggregateMarketing2Step } from '@/lib/marketing2/aggregation';
 import { resolveMarketing2Model } from '@/lib/marketing2/model-routing';
 import {
   buildImageFilename,
@@ -274,7 +275,42 @@ async function buildStepItems(
       break;
     }
     case 'prompt_planning': {
-      await createItem({ kind: 'prompt_planning', itemInput: {}, suffix: 'main' });
+      // 先创建轻量方案框架；框架完成后由聚合器创建 13 个独立提示词子项。
+      // 重跑失败步骤时复用原子项，避免旧失败记录影响本轮聚合。
+      const outline = existingItems.filter((item) => item.kind === 'prompt_outline').at(-1);
+      if (outline && ['failed', 'cancelled', 'completed'].includes(outline.status)) {
+        const reset = await prisma.marketingTaskItem.update({
+          where: { id: outline.id },
+          data: {
+            status: 'pending',
+            error: null,
+            attempts: 0,
+            result: Prisma.JsonNull,
+            startedAt: null,
+            completedAt: null,
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            itemVersion: { increment: 1 },
+          },
+        });
+        created.push(reset);
+      } else if (!outline) {
+        await createItem({ kind: 'prompt_outline', itemInput: {}, suffix: 'outline' });
+      }
+      await prisma.marketingTaskItem.updateMany({
+        where: { taskId, stepKey: 'prompt_planning', kind: { startsWith: 'prompt_plan:' }, status: { in: ['failed', 'cancelled'] } },
+        data: {
+          status: 'pending',
+          error: null,
+          attempts: 0,
+          result: Prisma.JsonNull,
+          startedAt: null,
+          completedAt: null,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          itemVersion: { increment: 1 },
+        },
+      });
       break;
     }
     case 'batch_generation': {
@@ -545,8 +581,22 @@ function aggregateStepResult(stepKey: string, stepItems: MarketingTaskItem[]): R
   switch (stepKey) {
     case 'material_validate':
     case 'visual_analysis':
-    case 'prompt_planning':
       return (completed[0]?.result as Record<string, unknown>) ?? {};
+    case 'prompt_planning': {
+      const outline = completed.find((item) => item.kind === 'prompt_outline')?.result as
+        | { appearanceLock?: string }
+        | undefined;
+      const plans = completed
+        .filter((item) => item.kind.startsWith('prompt_plan:'))
+        .map((item) => item.result as Record<string, unknown>)
+        .filter(Boolean)
+        .sort((left, right) => {
+          const leftKind = left.kind === 'main_image' ? 0 : 1;
+          const rightKind = right.kind === 'main_image' ? 0 : 1;
+          return leftKind - rightKind || Number(left.index ?? 0) - Number(right.index ?? 0);
+        });
+      return { appearanceLock: outline?.appearanceLock ?? '', plans };
+    }
     case 'background_cleanup': {
       const cleanedImages = completed.map((item) => {
         const result = item.result as Record<string, unknown>;
@@ -833,6 +883,59 @@ export async function setRunPaused(userId: string, taskId: string, paused: boole
   });
   await appendTaskEvent(taskId, userId, paused ? 'run_paused' : 'run_resumed');
   return findOwnedTask(userId, taskId);
+}
+
+/** 请求停止执行中的任务；已领取的当前子项完成后由聚合器将任务置为 cancelled。 */
+export async function requestRunCancel(userId: string, taskId: string) {
+  const task = await findOwnedTask(userId, taskId);
+  if (task.status !== 'running_step') {
+    throw new Marketing2Error('TASK_STATE_INVALID', '仅执行中的任务可以停止', { httpStatus: 409 });
+  }
+
+  const updated = await prisma.marketingTask.update({
+    where: { id: taskId },
+    data: { cancelRequestedAt: new Date(), pausedAt: null },
+  });
+  await prisma.marketingTaskItem.updateMany({
+    where: { taskId, status: 'pending' },
+    data: { status: 'cancelled', completedAt: new Date() },
+  });
+  await appendTaskEvent(taskId, userId, 'run_cancel_requested');
+  await maybeAggregateMarketing2Step(taskId);
+  return updated;
+}
+
+/** 立即终止营销助手任务；迟到的上游响应不会再写回 cancelled 子项。 */
+export async function forceRunCancel(userId: string, taskId: string) {
+  const task = await findOwnedTask(userId, taskId);
+  if (task.status === 'cancelled') return task;
+  if (task.status !== 'running_step' && !task.cancelRequestedAt) {
+    throw new Marketing2Error('TASK_STATE_INVALID', '仅执行中的任务可以强制停止', { httpStatus: 409 });
+  }
+
+  const now = new Date();
+  await prisma.marketingTaskItem.updateMany({
+    where: { taskId, status: { in: ['pending', 'running'] } },
+    data: {
+      status: 'cancelled',
+      completedAt: now,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+    },
+  });
+  const updated = await prisma.marketingTask.update({
+    where: { id: taskId },
+    data: {
+      status: 'cancelled',
+      awaitingReview: false,
+      cancelRequestedAt: task.cancelRequestedAt ?? now,
+      pausedAt: null,
+      error: '任务已强制停止',
+    },
+  });
+  await appendTaskEvent(taskId, userId, 'run_force_cancelled', { reason: 'user_force_stop' });
+  await appendTaskEvent(taskId, userId, 'task_cancelled', { force: true, stepKey: task.currentStep });
+  return updated;
 }
 
 // --------------------------------------------
