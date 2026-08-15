@@ -41,6 +41,12 @@ interface ActionContext {
   stepStates: Record<string, string>;
 }
 
+function assertWritableTask(task: MarketingTask): void {
+  if (task.workflowVersion < 3) {
+    throw new Marketing2Error('TASK_STATE_INVALID', '历史任务仅支持只读查看，不能执行写操作', { httpStatus: 409 });
+  }
+}
+
 async function loadContext(
   userId: string,
   taskId: string,
@@ -48,6 +54,7 @@ async function loadContext(
   expectedVersion: number
 ): Promise<ActionContext> {
   const task = await findOwnedTask(userId, taskId);
+  assertWritableTask(task);
   const workflow = getWorkflow(task.workflowKey ?? '');
   if (!workflow) {
     throw new Marketing2Error('WORKFLOW_NOT_FOUND', '任务缺少工作流定义', { httpStatus: 500 });
@@ -70,26 +77,23 @@ async function loadContext(
 
 function stepModelId(task: MarketingTask, stepKey: string, subKey?: string): string {
   const stepModels = (task.stepModels as Record<string, unknown> | null) ?? {};
-  if (task.workflowVersion >= 3) {
-    const v3 = stepModels as {
-      backgroundCleanup?: string;
-      visualAnalysis?: string;
-      promptGeneration?: string;
-      imageGeneration?: { items?: Record<string, string> };
-      quality?: { items?: Record<string, string> };
-      repair?: { items?: Record<string, string> };
-    };
-    if (stepKey === 'background_cleanup') return v3.backgroundCleanup ?? '';
-    if (stepKey === 'visual_analysis') return v3.visualAnalysis ?? '';
-    if (stepKey === 'prompt_planning') return v3.promptGeneration ?? '';
-    if (stepKey === 'batch_generation' && subKey) return v3.imageGeneration?.items?.[subKey] ?? '';
-    if (stepKey === 'quality_repair' && subKey?.startsWith('quality:')) return v3.quality?.items?.[subKey.slice(8)] ?? '';
-    if (stepKey === 'quality_repair' && subKey?.startsWith('repair:')) {
-      return v3.repair?.items?.[subKey.slice(7)] ?? v3.repair?.items?.default ?? '';
-    }
+  const selections = stepModels as {
+    backgroundCleanup?: string;
+    visualAnalysis?: string;
+    promptGeneration?: string;
+    imageGeneration?: { items?: Record<string, string> };
+    quality?: { items?: Record<string, string> };
+    repair?: { items?: Record<string, string> };
+  };
+  if (stepKey === 'background_cleanup') return selections.backgroundCleanup ?? '';
+  if (stepKey === 'visual_analysis') return selections.visualAnalysis ?? '';
+  if (stepKey === 'prompt_planning') return selections.promptGeneration ?? '';
+  if (stepKey === 'batch_generation' && subKey) return selections.imageGeneration?.items?.[subKey] ?? '';
+  if (stepKey === 'quality_repair' && subKey?.startsWith('quality:')) return selections.quality?.items?.[subKey.slice(8)] ?? '';
+  if (stepKey === 'quality_repair' && subKey?.startsWith('repair:')) {
+    return selections.repair?.items?.[subKey.slice(7)] ?? selections.repair?.items?.default ?? '';
   }
-  const value = stepModels[subKey ?? stepKey];
-  return typeof value === 'string' ? value : '';
+  return '';
 }
 
 async function bumpTaskVersion(taskId: string, expectedVersion: number, data: Prisma.MarketingTaskUpdateInput) {
@@ -153,22 +157,18 @@ export async function executeStep(
   // 能力不足在执行前拦截，不产生上游请求（交互 9）
   const capabilities = STEP_CAPABILITY_MATRIX[stepKey] as ModelCapabilityKey[];
   const modelId = stepModelId(task, stepKey);
-  if (capabilities.length > 0 && stepKey !== 'quality_repair' && !(task.workflowVersion >= 3 && stepKey === 'batch_generation')) {
+  if (capabilities.length > 0 && stepKey !== 'quality_repair' && stepKey !== 'batch_generation') {
     await resolveMarketing2Model(userId, modelId, capabilities);
   }
-  if (stepKey === 'quality_repair' && task.workflowVersion < 3) {
-    await resolveMarketing2Model(userId, stepModelId(task, 'quality_repair'), STEP_CAPABILITY_MATRIX['quality_repair']);
-  }
-  if (task.workflowVersion >= 3 && stepKey === 'batch_generation') {
-    const input = (task.input as Record<string, unknown>) ?? {};
-    const plans = await resolveBatchPlans(task, input, (task.stepResults as Record<string, Record<string, unknown>>) ?? {});
+  if (stepKey === 'batch_generation') {
+    const plans = await resolveBatchPlans((task.stepResults as Record<string, Record<string, unknown>>) ?? {});
     for (const plan of plans) {
       const itemKey = plan.kind === 'main_image' ? mainImageItemKind(plan.index) : detailPageItemKind(plan.index);
       await resolveMarketing2Model(userId, stepModelId(task, stepKey, itemKey), capabilities);
     }
   }
-  if (task.workflowVersion >= 3 && stepKey === 'quality_repair') {
-    const targets = await resolveQualityTargets(task, (task.input as Record<string, unknown>) ?? {}, items);
+  if (stepKey === 'quality_repair') {
+    const targets = await resolveQualityTargets(task, items);
     for (const target of targets) {
       await resolveMarketing2Model(userId, stepModelId(task, stepKey, `quality:${target.assetId}`), capabilities);
     }
@@ -251,7 +251,6 @@ async function buildStepItems(
     }
     case 'background_cleanup': {
       const images = (input.productImages as string[]) ?? [];
-      const instruction = (input.cleanupInstruction as string) ?? '';
       const requestedPrimary = input.primaryImageId;
       const primaryImage = typeof requestedPrimary === 'string' && images.includes(requestedPrimary)
         ? requestedPrimary
@@ -262,7 +261,6 @@ async function buildStepItems(
         itemInput: {
           image: primaryImage,
           supportingImages: images.filter((image) => image !== primaryImage),
-          instruction,
         },
         suffix: 'primary',
       });
@@ -314,7 +312,7 @@ async function buildStepItems(
       break;
     }
     case 'batch_generation': {
-      const plans = await resolveBatchPlans(task, input, stepResults);
+      const plans = await resolveBatchPlans(stepResults);
       const referenceImages = await resolveReferenceImages(task, input);
       for (const plan of plans) {
         const kind =
@@ -332,21 +330,19 @@ async function buildStepItems(
                 ? ((input.mainImageRatio as string) ?? '1:1')
                 : ((input.detailPageRatio as string) ?? '3:4'),
           },
-          model: task.workflowVersion >= 3 ? stepModelId(task, 'batch_generation', kind) : undefined,
+          model: stepModelId(task, 'batch_generation', kind),
           suffix: kind,
         });
       }
       break;
     }
     case 'quality_repair': {
-      const targets = await resolveQualityTargets(task, input, existingItems);
+      const targets = await resolveQualityTargets(task, existingItems);
       for (const target of targets) {
         await createItem({
           kind: qualityCheckItemKind(target.assetId),
           itemInput: { assetId: target.assetId, url: target.url },
-          model: task.workflowVersion >= 3
-            ? stepModelId(task, 'quality_repair', `quality:${target.assetId}`)
-            : stepModelId(task, 'quality_repair'),
+          model: stepModelId(task, 'quality_repair', `quality:${target.assetId}`),
           suffix: `check-${target.assetId}`,
         });
       }
@@ -380,10 +376,8 @@ async function getCleanedImageUrls(
   return urls;
 }
 
-/** 批量生图规划：来自已审批的策划结果或独立工作流的导入提示词。 */
+/** 批量生图规划：来自已审批的策划结果。 */
 async function resolveBatchPlans(
-  task: MarketingTask,
-  input: Record<string, unknown>,
   stepResults: Record<string, Record<string, unknown>>
 ) {
   const planningResult = stepResults.prompt_planning?.result as
@@ -391,17 +385,12 @@ async function resolveBatchPlans(
     | undefined;
   if (planningResult?.plans?.length) return planningResult.plans;
 
-  const imported = input.prompts as
-    | { kind: 'main_image' | 'detail_page'; index: number; keyword?: string; prompt: string; negativePrompt?: string }[]
-    | undefined;
-  if (imported?.length) return imported;
-
-  throw new Marketing2Error('STEP_DEPENDENCY_MISSING', '缺少提示词规划或导入提示词', {
+  throw new Marketing2Error('STEP_DEPENDENCY_MISSING', '缺少提示词规划', {
     httpStatus: 409,
   });
 }
 
-/** 参考图：净化图 > 任务参考图输入 > 原图。 */
+/** 参考图：净化图 > 原图。 */
 async function resolveReferenceImages(
   task: MarketingTask,
   input: Record<string, unknown>
@@ -416,36 +405,27 @@ async function resolveReferenceImages(
   }
   if (cleaned.length > 0) return cleaned;
 
-  const referenceImages = input.referenceImages as string[] | undefined;
-  if (referenceImages?.length) return referenceImages;
-
   return (input.productImages as string[]) ?? [];
 }
 
-/** 质检对象：批次生成的最新资产，或独立工作流输入的 assetIds。 */
+/** 质检对象：批次生成的最新资产。 */
 async function resolveQualityTargets(
   task: MarketingTask,
-  input: Record<string, unknown>,
   existingItems: MarketingTaskItem[]
 ) {
   let assetIds: string[] = [];
 
-  const inputAssetIds = input.assetIds as string[] | undefined;
-  if (inputAssetIds?.length) {
-    assetIds = inputAssetIds;
-  } else {
-    const assets = await prisma.asset.findMany({
-      where: { marketingTaskId: task.id, stepKey: 'batch_generation' },
-      orderBy: { createdAt: 'asc' },
-    });
-    // 同一来源资产只质检最新版本
-    const latestByParent = new Map<string, (typeof assets)[number]>();
-    for (const asset of assets) {
-      const key = asset.parentAssetId ?? asset.id;
-      latestByParent.set(key, asset);
-    }
-    assetIds = [...latestByParent.values()].map((asset) => asset.id);
+  const assets = await prisma.asset.findMany({
+    where: { marketingTaskId: task.id, stepKey: 'batch_generation' },
+    orderBy: { createdAt: 'asc' },
+  });
+  // 同一来源资产只质检最新版本
+  const latestByParent = new Map<string, (typeof assets)[number]>();
+  for (const asset of assets) {
+    const key = asset.parentAssetId ?? asset.id;
+    latestByParent.set(key, asset);
   }
+  assetIds = [...latestByParent.values()].map((asset) => asset.id);
 
   // 返修产生的新资产也要质检（复检）
   const repairedAssets = await prisma.asset.findMany({
@@ -828,7 +808,8 @@ export async function retryItem(
     });
   }
   // 归属校验：越权任务按不存在处理
-  await findOwnedTask(userId, taskId);
+  const task = await findOwnedTask(userId, taskId);
+  assertWritableTask(task);
   const item = await prisma.marketingTaskItem.findFirst({ where: { id: itemId, taskId } });
   if (!item) {
     throw new Marketing2Error('ITEM_NOT_FOUND', '子任务不存在或不属于当前任务', { httpStatus: 404 });
@@ -871,6 +852,7 @@ export async function retryItem(
 
 export async function setRunPaused(userId: string, taskId: string, paused: boolean) {
   const task = await findOwnedTask(userId, taskId);
+  assertWritableTask(task);
   if (paused && task.status !== 'running_step') {
     throw new Marketing2Error('TASK_STATE_INVALID', '仅执行中的任务可以暂停', { httpStatus: 409 });
   }
@@ -888,6 +870,7 @@ export async function setRunPaused(userId: string, taskId: string, paused: boole
 /** 请求停止执行中的任务；已领取的当前子项完成后由聚合器将任务置为 cancelled。 */
 export async function requestRunCancel(userId: string, taskId: string) {
   const task = await findOwnedTask(userId, taskId);
+  assertWritableTask(task);
   if (task.status !== 'running_step') {
     throw new Marketing2Error('TASK_STATE_INVALID', '仅执行中的任务可以停止', { httpStatus: 409 });
   }
@@ -908,6 +891,7 @@ export async function requestRunCancel(userId: string, taskId: string) {
 /** 立即终止营销助手任务；迟到的上游响应不会再写回 cancelled 子项。 */
 export async function forceRunCancel(userId: string, taskId: string) {
   const task = await findOwnedTask(userId, taskId);
+  assertWritableTask(task);
   if (task.status === 'cancelled') return task;
   if (task.status !== 'running_step' && !task.cancelRequestedAt) {
     throw new Marketing2Error('TASK_STATE_INVALID', '仅执行中的任务可以强制停止', { httpStatus: 409 });
@@ -987,6 +971,7 @@ export async function createRepairItems(
     });
   }
   const task = await findOwnedTask(userId, taskId);
+  assertWritableTask(task);
   if (task.currentStep !== 'quality_repair') {
     throw new Marketing2Error('STEP_STATE_INVALID', '当前不在质检与返修阶段', { httpStatus: 409 });
   }

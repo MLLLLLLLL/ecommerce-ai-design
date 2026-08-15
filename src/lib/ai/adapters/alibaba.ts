@@ -1,5 +1,6 @@
 import { AIServiceAdapter } from '../base';
 import { TextToImageParams, ImageToImageParams, AIServiceConfig } from '@/types/ai';
+import { safeFetch } from '@/lib/security/safe-fetch';
 
 /**
  * 阿里百炼（通义万相）适配器
@@ -19,7 +20,7 @@ export class AlibabaAdapter extends AIServiceAdapter {
   async testConnection(): Promise<boolean> {
     try {
       // 使用一个简单的请求测试连接
-      const response = await fetch(`${this.baseURL}/services/aigc/text2image/image-synthesis`, {
+      const response = await safeFetch(`${this.baseURL}/services/aigc/text2image/image-synthesis`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.config.apiKey}`,
@@ -55,7 +56,7 @@ export class AlibabaAdapter extends AIServiceAdapter {
       // 阿里百炼的尺寸格式: 1024*1024
       const size = `${params.width}*${params.height}`;
 
-      const response = await fetch(`${this.baseURL}/services/aigc/text2image/image-synthesis`, {
+      const response = await safeFetch(`${this.baseURL}/services/aigc/text2image/image-synthesis`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.config.apiKey}`,
@@ -105,7 +106,7 @@ export class AlibabaAdapter extends AIServiceAdapter {
       const model = this.config.model || 'wanx-v1';
       const size = `${params.width}*${params.height}`;
 
-      const response = await fetch(`${this.baseURL}/services/aigc/image2image/image-synthesis`, {
+      const response = await safeFetch(`${this.baseURL}/services/aigc/image2image/image-synthesis`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.config.apiKey}`,

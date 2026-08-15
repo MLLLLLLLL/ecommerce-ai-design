@@ -38,7 +38,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
 /**
  * DELETE /api/marketing2/runs/:id
- * 删除草稿任务；force=true 仅用于用户明确确认的历史清理。
+ * 删除草稿任务；草稿生命周期内的所有阶段均可删除，force=true 用于历史任务清理。
  */
 export async function DELETE(request: NextRequest, context: RouteContext) {
   try {

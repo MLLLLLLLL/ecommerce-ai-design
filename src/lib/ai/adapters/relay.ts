@@ -1,5 +1,6 @@
 import { AIServiceAdapter } from '../base';
 import { TextToImageParams, ImageToImageParams, AIServiceConfig } from '@/types/ai';
+import { safeFetch } from '@/lib/security/safe-fetch';
 
 // ToAPI 异步任务轮询参数（官方文档建议间隔 5-10 秒并加抖动，最长等待 120 秒）
 const TASK_POLL_INTERVAL_MS = 5000;
@@ -154,7 +155,7 @@ export class RelayAdapter extends AIServiceAdapter {
 
     let lastError = '';
     for (const endpoint of this.endpoints('/uploads/images')) {
-      const response = await fetch(endpoint, {
+      const response = await safeFetch(endpoint, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${this.config.apiKey}` },
         body: formData,
@@ -184,7 +185,7 @@ export class RelayAdapter extends AIServiceAdapter {
 
     while (Date.now() - startedAt < TASK_POLL_TIMEOUT_MS) {
       for (const endpoint of this.endpoints(`/images/generations/${taskId}`)) {
-        const response = await fetch(endpoint, {
+        const response = await safeFetch(endpoint, {
           method: 'GET',
           headers: {
             'Authorization': `Bearer ${this.config.apiKey}`,
@@ -270,7 +271,7 @@ export class RelayAdapter extends AIServiceAdapter {
   private async testOpenAIRelay(): Promise<boolean> {
     let lastError = '';
     for (const endpoint of this.endpoints('/models')) {
-      const response = await fetch(endpoint, {
+      const response = await safeFetch(endpoint, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${this.config.apiKey}`,
@@ -291,7 +292,7 @@ export class RelayAdapter extends AIServiceAdapter {
    * 测试SD格式中转站
    */
   private async testSDRelay(): Promise<boolean> {
-    const response = await fetch(`${this.baseURL}/sdapi/v1/sd-models`, {
+    const response = await safeFetch(`${this.baseURL}/sdapi/v1/sd-models`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -332,7 +333,7 @@ export class RelayAdapter extends AIServiceAdapter {
       let lastError = '';
 
       for (const endpoint of endpoints) {
-        const response = await fetch(endpoint, {
+        const response = await safeFetch(endpoint, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.config.apiKey}`,
@@ -399,7 +400,7 @@ export class RelayAdapter extends AIServiceAdapter {
    */
   private async textToImageSD(params: TextToImageParams): Promise<string[]> {
     try {
-      const response = await fetch(`${this.baseURL}/sdapi/v1/txt2img`, {
+      const response = await safeFetch(`${this.baseURL}/sdapi/v1/txt2img`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -469,7 +470,7 @@ export class RelayAdapter extends AIServiceAdapter {
       formData.append('n', params.samples.toString());
       formData.append('size', `${params.width}x${params.height}`);
 
-      const response = await fetch(`${this.baseURL}/images/edits`, {
+      const response = await safeFetch(`${this.baseURL}/images/edits`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.config.apiKey}`,
@@ -513,7 +514,7 @@ export class RelayAdapter extends AIServiceAdapter {
       let lastError = '';
 
       for (const endpoint of this.endpoints('/images/generations')) {
-        const response = await fetch(endpoint, {
+        const response = await safeFetch(endpoint, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.config.apiKey}`,
@@ -549,7 +550,7 @@ export class RelayAdapter extends AIServiceAdapter {
       // 确保图片是base64格式
       const base64Image = await this.ensureBase64(params.image);
 
-      const response = await fetch(`${this.baseURL}/sdapi/v1/img2img`, {
+      const response = await safeFetch(`${this.baseURL}/sdapi/v1/img2img`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -593,7 +594,7 @@ export class RelayAdapter extends AIServiceAdapter {
    */
   private async urlOrBase64ToBlob(data: string): Promise<Blob> {
     if (data.startsWith('http')) {
-      const response = await fetch(data);
+      const response = await safeFetch(data);
       return await response.blob();
     }
 
@@ -607,7 +608,7 @@ export class RelayAdapter extends AIServiceAdapter {
    */
   private async ensureBase64(data: string): Promise<string> {
     if (data.startsWith('http')) {
-      const response = await fetch(data);
+      const response = await safeFetch(data);
       const blob = await response.blob();
       const buffer = await blob.arrayBuffer();
       return Buffer.from(buffer).toString('base64');

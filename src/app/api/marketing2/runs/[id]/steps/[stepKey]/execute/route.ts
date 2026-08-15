@@ -5,8 +5,6 @@ import { executeStep } from '@/lib/marketing2/step-actions';
 import { handleMarketing2Error, readIdempotencyKey } from '@/app/api/marketing2/common';
 import { startMarketingWorker } from '@/lib/marketing/async/worker';
 
-startMarketingWorker();
-
 type RouteContext = { params: Promise<{ id: string; stepKey: string }> };
 
 const executeBodySchema = z
@@ -22,6 +20,7 @@ const executeBodySchema = z
  */
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
+    startMarketingWorker();
     const { id, stepKey } = await context.params;
     const user = await getCurrentUser();
     const body = executeBodySchema.parse(await request.json().catch(() => ({})));

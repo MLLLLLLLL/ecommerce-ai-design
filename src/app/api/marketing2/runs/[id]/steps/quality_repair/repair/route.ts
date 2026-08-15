@@ -4,8 +4,6 @@ import { createRepairItems } from '@/lib/marketing2/step-actions';
 import { handleMarketing2Error, readIdempotencyKey } from '@/app/api/marketing2/common';
 import { startMarketingWorker } from '@/lib/marketing/async/worker';
 
-startMarketingWorker();
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
@@ -14,6 +12,7 @@ type RouteContext = { params: Promise<{ id: string }> };
  */
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
+    startMarketingWorker();
     const { id } = await context.params;
     const user = await getCurrentUser();
     const body = await request.json().catch(() => ({}));

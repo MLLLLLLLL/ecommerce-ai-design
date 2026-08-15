@@ -59,9 +59,10 @@ export function useAsyncGeneration({
 }: UseAsyncGenerationProps) {
   const { detail, poll } = useTaskPolling();
   const handledTaskRef = useRef<string | null>(null);
+  const activeTaskRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!detail) return;
+    if (!detail || activeTaskRef.current !== detail.id) return;
     if (TERMINAL_TASK_STATUSES.has(detail.status)) {
       if (handledTaskRef.current === detail.id) return;
       handledTaskRef.current = detail.id;
@@ -107,6 +108,7 @@ export function useAsyncGeneration({
           throw new Error(data.error?.message || '提交失败');
         }
         const taskId = data.data.taskId as string;
+        activeTaskRef.current = taskId;
         recordTaskId(taskId);
         await poll(taskId);
       } catch (error) {

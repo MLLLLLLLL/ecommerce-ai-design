@@ -19,14 +19,13 @@ export class OutputNode extends WorkflowNode {
 
   async execute(context: ExecutionContext): Promise<any> {
     const imageUrl = context.inputs.image;
-
-    // TODO: 调用 API 保存到资源库
-    // 这里需要调用 /api/assets 创建资源
-
+    if (context.config.autoSave !== false) {
+      throw new Error('输出节点的资源库保存需要通过带任务上下文的服务端流程执行，当前画布执行器未启用该能力');
+    }
     return {
-      saved: true,
+      saved: false,
       imageUrl,
-      message: '已保存到资源库',
+      message: '已生成输出，未写入资源库',
     };
   }
 

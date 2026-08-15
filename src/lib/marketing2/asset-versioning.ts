@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db/prisma';
 import { FileStorage } from '@/lib/storage/FileStorage';
 import { getAssetUrl } from '@/lib/utils';
 import { Marketing2Error } from '@/lib/marketing2/schemas';
+import { safeFetch } from '@/lib/security/safe-url';
 
 // ============================================
 // 营销助手2资产版本（V2 6.3 / 8.3）
@@ -26,6 +27,7 @@ export interface DerivedAssetInput {
   modelSnapshot?: { modelId: string; name: string; provider: string; model: string } | null;
   parameters?: Record<string, unknown>;
   source?: string;
+  contentType?: string;
 }
 
 function getStorage(): FileStorage {
@@ -52,7 +54,11 @@ export async function createDerivedAsset(input: DerivedAssetInput) {
   await storage.init();
 
   const filename = await resolveUniqueFilename(input.taskId, input.filename);
-  const { filepath, thumbnail } = await storage.saveFromBuffer(input.buffer, filename);
+  const isImage = input.contentType?.startsWith('image/') ?? Boolean(path.extname(filename).match(/\.(png|jpe?g|webp|gif)$/i));
+  const stored = isImage
+    ? await storage.saveFromBuffer(input.buffer, filename)
+    : await storage.saveObjectFromBuffer(input.buffer, filename);
+  const { filepath, thumbnail } = stored;
 
   let width: number | undefined;
   let height: number | undefined;
@@ -82,7 +88,7 @@ export async function createDerivedAsset(input: DerivedAssetInput) {
       filesize: input.buffer.length,
       width: width ?? null,
       height: height ?? null,
-      format: path.extname(filename).slice(1) || 'png',
+      format: path.extname(filename).slice(1).toLowerCase() || 'bin',
       prompt: input.prompt ?? null,
       negativePrompt: input.negativePrompt ?? null,
       aiModel: input.modelSnapshot?.model ?? null,
@@ -132,7 +138,7 @@ export async function resolveImageToDataURL(reference: string): Promise<string> 
     }
     buffer = await fs.readFile(absolute).catch(() => null);
   } else if (reference.startsWith('http://') || reference.startsWith('https://')) {
-    const response = await fetch(reference);
+    const response = await safeFetch(reference);
     if (response.ok) buffer = Buffer.from(await response.arrayBuffer());
   } else {
     // user-data 相对路径（Asset.filepath）
@@ -157,13 +163,17 @@ export async function fetchGeneratedImage(imageRef: string): Promise<Buffer> {
     return Buffer.from(imageRef.slice(imageRef.indexOf(',') + 1), 'base64');
   }
   if (imageRef.startsWith('http://') || imageRef.startsWith('https://')) {
-    const response = await fetch(imageRef);
+    const response = await safeFetch(imageRef);
     if (!response.ok) {
       throw new Marketing2Error('UPSTREAM_FAILED', `生成结果下载失败 (HTTP ${response.status})`, {
         httpStatus: 502,
       });
     }
-    return Buffer.from(await response.arrayBuffer());
+    const contentLength = Number(response.headers.get('content-length') ?? 0);
+    if (contentLength > 20 * 1024 * 1024) throw new Marketing2Error('UPSTREAM_FAILED', '生成图片超过大小限制', { httpStatus: 502 });
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > 20 * 1024 * 1024) throw new Marketing2Error('UPSTREAM_FAILED', '生成图片超过大小限制', { httpStatus: 502 });
+    return buffer;
   }
   return Buffer.from(imageRef, 'base64');
 }

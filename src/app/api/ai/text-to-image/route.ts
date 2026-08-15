@@ -5,7 +5,6 @@ import { FileStorage } from '@/lib/storage/FileStorage';
 import { prisma } from '@/lib/db/prisma';
 import path from 'path';
 import crypto from 'crypto';
-import sharp from 'sharp';
 
 export async function POST(req: NextRequest) {
   try {
@@ -76,26 +75,11 @@ export async function POST(req: NextRequest) {
     // 处理每张生成的图片
     for (const url of imageUrls) {
       try {
-        // 下载图片
-        const response = await fetch(url);
-        if (!response.ok) {
-          console.error(`Failed to fetch image from ${url}`);
-          continue;
-        }
-
-        const buffer = Buffer.from(await response.arrayBuffer());
-
-        // 获取图片信息
-        const imageInfo = await sharp(buffer).metadata();
-
         // 生成文件名
         const filename = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}.png`;
 
-        // 保存文件
-        const { filepath, thumbnail } = await storage.saveFromBuffer(
-          buffer,
-          filename
-        );
+        const saved = await storage.saveFromUrl(url, filename);
+        const { filepath, thumbnail } = saved;
 
         // 创建数据库记录
         const asset = await prisma.asset.create({
@@ -104,9 +88,9 @@ export async function POST(req: NextRequest) {
             filename,
             filepath,
             thumbnail,
-            filesize: buffer.length,
-            width: imageInfo.width || params.width || 1024,
-            height: imageInfo.height || params.height || 1024,
+            filesize: saved.size,
+            width: saved.width || params.width || 1024,
+            height: saved.height || params.height || 1024,
             format: 'png',
             prompt: params.prompt,
             negativePrompt: params.negativePrompt || null,

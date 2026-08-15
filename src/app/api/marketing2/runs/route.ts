@@ -2,10 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { createRun, listRuns } from '@/lib/marketing2/run-service';
 import { handleMarketing2Error, readIdempotencyKey } from '@/app/api/marketing2/common';
-import { startMarketingWorker } from '@/lib/marketing/async/worker';
-
-// 模块加载时确保 Worker 运行（与旧营销任务一致）
-startMarketingWorker();
 
 /**
  * GET /api/marketing2/runs?status=draft,awaiting_review&workflowKey=...&cursor=...&limit=20

@@ -163,6 +163,7 @@ export async function exportRun(task: MarketingTask, items: MarketingTaskItem[],
     filename,
     derivedReason: `export:${format}`,
     source: 'marketing2-export',
+    contentType: format === 'markdown' || format === 'prompts' ? 'text/markdown' : 'application/json',
   });
 
   return { assetId: asset.id, url, filename };

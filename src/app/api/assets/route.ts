@@ -6,8 +6,8 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const page = parseInt(searchParams.get('page') || '1');
-    const pageSize = parseInt(searchParams.get('pageSize') || '20');
+    const page = Math.max(1, Math.min(parseInt(searchParams.get('page') || '1', 10) || 1, 100000));
+    const pageSize = Math.max(1, Math.min(parseInt(searchParams.get('pageSize') || '20', 10) || 20, 100));
     const folderId = searchParams.get('folderId');
     const source = searchParams.get('source');
     const search = searchParams.get('search');

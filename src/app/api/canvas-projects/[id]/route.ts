@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
+import { getCurrentUser } from '@/lib/auth/current-user';
 
 // GET /api/canvas-projects/[id] - 画布项目详情（含 definition，进入编辑器时调用）
 export async function GET(
@@ -8,8 +9,9 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const project = await prisma.canvasProject.findUnique({
-      where: { id },
+    const user = await getCurrentUser();
+    const project = await prisma.canvasProject.findFirst({
+      where: { id, userId: user.id },
     });
 
     if (!project) {
@@ -39,6 +41,7 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+    const user = await getCurrentUser();
     const body = await req.json();
     const { name, definition, thumbnail } = body;
 
@@ -47,21 +50,15 @@ export async function PATCH(
     if (definition !== undefined) updateData.definition = definition;
     if (thumbnail !== undefined) updateData.thumbnail = thumbnail;
 
-    const project = await prisma.canvasProject.update({
-      where: { id },
+    const project = await prisma.canvasProject.updateMany({
+      where: { id, userId: user.id },
       data: updateData,
-      select: {
-        id: true,
-        name: true,
-        thumbnail: true,
-        createdAt: true,
-        updatedAt: true,
-      },
     });
+    if (!project.count) return NextResponse.json({ success: false, error: 'Canvas project not found' }, { status: 404 });
 
     return NextResponse.json({
       success: true,
-      project,
+      project: await prisma.canvasProject.findFirst({ where: { id, userId: user.id }, select: { id: true, name: true, thumbnail: true, createdAt: true, updatedAt: true } }),
     });
   } catch (error: any) {
     console.error('[API] Update canvas project error:', error);
@@ -79,9 +76,9 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    await prisma.canvasProject.delete({
-      where: { id },
-    });
+    const user = await getCurrentUser();
+    const deleted = await prisma.canvasProject.deleteMany({ where: { id, userId: user.id } });
+    if (!deleted.count) return NextResponse.json({ success: false, error: 'Canvas project not found' }, { status: 404 });
 
     return NextResponse.json({
       success: true,

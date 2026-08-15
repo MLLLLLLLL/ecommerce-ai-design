@@ -6,6 +6,7 @@ import {
   createSearchService,
   toSearchServiceSummary,
 } from '@/lib/search/search-service-config';
+import { assertSafeOutboundUrl } from '@/lib/security/safe-url';
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -38,6 +39,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = createSchema.parse(await request.json());
+    await assertSafeOutboundUrl(body.baseURL);
     const user = await getCurrentUser();
     const config = await createSearchService(user.id, body);
     return NextResponse.json(
@@ -50,6 +52,9 @@ export async function POST(request: NextRequest) {
         { success: false, error: '搜索服务字段不完整或格式不正确' },
         { status: 400 }
       );
+    }
+    if (error instanceof Error && /上游地址|内网|HTTPS|内部主机|解析/.test(error.message)) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
     }
     console.error('[API] Create search service error:', error);
     return NextResponse.json({ success: false, error: '保存搜索服务失败' }, { status: 500 });

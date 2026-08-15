@@ -4,6 +4,7 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { prisma } from '@/lib/db/prisma';
 import { toModelConfigSummary } from '@/lib/model-configs';
 import { encryptServerSecret } from '@/lib/security/server-encryption';
+import { assertSafeOutboundUrl } from '@/lib/security/safe-url';
 
 const capabilitiesSchema = z.object({
   vision: z.boolean(),
@@ -33,10 +34,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
     const body = updateModelSchema.parse(await request.json());
+    await assertSafeOutboundUrl(body.baseURL);
     const user = await getCurrentUser();
     const existing = await prisma.modelConfig.findFirst({ where: { id, userId: user.id } });
     if (!existing) {
       return NextResponse.json({ success: false, error: '模型不存在或无权限修改' }, { status: 404 });
+    }
+    const normalizedBaseURL = body.baseURL.replace(/\/+$/, '');
+    const endpointChanged = normalizedBaseURL !== existing.baseURL ||
+      body.provider !== existing.provider || body.relayType !== existing.relayType;
+    if (endpointChanged && !body.apiKey) {
+      return NextResponse.json(
+        { success: false, error: '修改服务地址、提供商或中继类型时必须重新输入 API Key' },
+        { status: 400 }
+      );
     }
 
     const config = await prisma.$transaction(async (tx) => {
@@ -52,7 +63,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           name: body.name,
           provider: body.provider,
           relayType: body.relayType,
-          baseURL: body.baseURL.replace(/\/+$/, ''),
+          baseURL: normalizedBaseURL,
           model: body.model,
           apiProtocol: body.apiProtocol,
           capabilities: body.capabilities,
@@ -67,6 +78,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ success: false, error: '模型配置字段不完整或格式不正确' }, { status: 400 });
+    }
+    if (error instanceof Error && /上游地址|内网|HTTPS|内部主机|解析/.test(error.message)) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
     }
     console.error('[API] Update model config error:', error);
     return NextResponse.json({ success: false, error: '更新模型配置失败' }, { status: 500 });

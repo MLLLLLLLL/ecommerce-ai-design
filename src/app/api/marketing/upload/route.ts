@@ -4,8 +4,9 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 import type { Metadata } from 'sharp';
-import { getCurrentUser } from '@/lib/auth/current-user';
 import { getAssetUrl } from '@/lib/utils';
+import { prisma } from '@/lib/db/prisma';
+import { getCurrentUser } from '@/lib/auth/current-user';
 import {
   PRODUCT_IMAGE_ALLOWED_MIME,
   PRODUCT_IMAGE_MAX,
@@ -82,6 +83,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     await fs.mkdir(marketingDir, { recursive: true });
 
     const saved: MarketingUploadFile[] = [];
+    const user = await getCurrentUser();
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
 
@@ -116,6 +118,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const filename = `${randomUUID()}.${ext}`;
       const filepath = path.join(marketingDir, filename);
       await fs.writeFile(filepath, buffer);
+      await prisma.asset.create({
+        data: {
+          userId: user.id,
+          filename,
+          filepath,
+          filesize: buffer.length,
+          width: metadata.width ?? null,
+          height: metadata.height ?? null,
+          format: format,
+          source: 'marketing-upload',
+        },
+      });
 
       saved.push({
         url: getAssetUrl(filepath),

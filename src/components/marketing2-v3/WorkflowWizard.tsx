@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronLeft, Loader2, Square } from 'lucide-react';
+import { Check, ChevronLeft, Download, Loader2, Square } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -109,6 +110,7 @@ function ModelSelect({ label, value, models, capabilities, onChange }: {
 }
 
 export function WorkflowWizardV3({ initialRunId }: { initialRunId?: string | null }) {
+  const router = useRouter();
   const [runId, setRunId] = useState(initialRunId ?? null);
   const { detail, refresh, loading } = useMarketing2Run(runId);
   const [input, setInput] = useState<Record<string, unknown>>(DEFAULT_INPUT);
@@ -122,6 +124,7 @@ export function WorkflowWizardV3({ initialRunId }: { initialRunId?: string | nul
   const [edits, setEdits] = useState<StepEdits | null>(null);
   const [overrides, setOverrides] = useState<QualityOverride[]>([]);
   const [syncedTaskKey, setSyncedTaskKey] = useState<string | null>(null);
+  const [exportFormat, setExportFormat] = useState('markdown');
 
   useEffect(() => {
     const loadModels = () => marketing2Api.models().then(setModels).catch(() => undefined);
@@ -246,6 +249,26 @@ export function WorkflowWizardV3({ initialRunId }: { initialRunId?: string | nul
     await marketing2Api.skip(runId, 'background_cleanup', detail.task.taskVersion, '用户选择使用原始产品图'); await refresh();
   });
 
+  const retryAllFailed = () => runAction(async () => {
+    if (!runId || !detail) return;
+    for (const item of detail.items.filter((item) => ['failed', 'cancelled'].includes(item.status))) {
+      await marketing2Api.retryItem(runId, item.id);
+    }
+    await refresh();
+  });
+  const togglePause = () => runAction(async () => {
+    if (!runId || !detail) return;
+    if (detail.task.pausedAt) await marketing2Api.resume(runId);
+    else await marketing2Api.pause(runId);
+    await refresh();
+  });
+  const exportTask = () => runAction(async () => {
+    if (!runId) return;
+    const result = await marketing2Api.exportRun(runId, exportFormat);
+    window.open(result.url, '_blank');
+    toast.success(`已导出：${result.filename}`);
+  });
+
   const changeInput = (next: Record<string, unknown>) => { setInput(next); setDirty(true); };
   const stepState = (key: string) => states[key] ?? 'idle';
   const statusLabel = detail?.task.status === 'completed' ? '已完成' : detail?.task.status === 'cancelled' ? '已停止' : dirty ? '未保存' : '已保存';
@@ -253,7 +276,7 @@ export function WorkflowWizardV3({ initialRunId }: { initialRunId?: string | nul
   let content: React.ReactNode;
   if (page === 'product_preparation') {
     content = <div className="space-y-6">
-      <MaterialStep workflowKey="marketing2-image-detail-full" value={input} onChange={changeInput} disabled={busy || stepState('material_validate') !== 'idle'} />
+      <MaterialStep value={input} onChange={changeInput} disabled={busy || stepState('material_validate') !== 'idle'} />
       {((input.productImages as string[]) ?? []).length > 1 && <div className="max-w-xs space-y-1.5">
         <Label className="text-xs text-muted-foreground">主参考图</Label>
         <Select value={(input.primaryImageId as string) || ((input.productImages as string[])[0] ?? '')} onValueChange={(primaryImageId) => changeInput({ ...input, primaryImageId })}>
@@ -284,7 +307,7 @@ export function WorkflowWizardV3({ initialRunId }: { initialRunId?: string | nul
         const label = `${plan.kind === 'main_image' ? '主图' : '详情页'} ${plan.index}${plan.keyword ? ` · ${plan.keyword}` : ''}`;
         return <ModelSelect key={key} label={<PromptHoverLabel label={label} prompt={plan.prompt} align={planIndex % 2 === 0 ? 'left' : 'right'} />} value={selections.imageGeneration.items[key]} models={models} capabilities={['imageGeneration', 'referenceImage']} onChange={(modelId) => void saveSelection(`imageGeneration:${key}`, modelId)} />;
       })}</div></section>}
-      {detail && <BatchGenerationStep detail={detail} onRetryItem={(itemId) => void runAction(async () => { if (!runId) return; await marketing2Api.retryItem(runId, itemId); await refresh(); })} onRetryAllFailed={() => undefined} onPauseToggle={() => undefined} onBatchSubmitChange={() => undefined} busy={busy} />}
+      {detail && <BatchGenerationStep detail={detail} onRetryItem={(itemId) => void runAction(async () => { if (!runId) return; await marketing2Api.retryItem(runId, itemId); await refresh(); })} onRetryAllFailed={() => void retryAllFailed()} onPauseToggle={() => void togglePause()} busy={busy} />}
     </div>;
   } else {
     const assets = detail?.assets.filter((asset) => asset.stepKey === 'batch_generation') ?? [];
@@ -331,7 +354,30 @@ export function WorkflowWizardV3({ initialRunId }: { initialRunId?: string | nul
     {taskRunning && runningStepKey && runningStartedAt !== null && <div role="status" aria-live="polite" className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-blue-950 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-100"><div className="flex min-w-0 items-center gap-3"><Loader2 className="h-5 w-5 shrink-0 animate-spin text-blue-600 dark:text-blue-300" /><div><p className="text-sm font-semibold">{detail?.task.cancelRequestedAt ? '正在停止任务' : '任务正在进行中'}</p><p className="text-xs text-blue-700 dark:text-blue-200">{detail?.task.cancelRequestedAt ? '已提交停止请求，当前项目完成后停止后续处理' : `${RUNNING_STEP_LABELS[runningStepKey] ?? '正在处理当前步骤'}，请稍等`}</p></div></div><div className="flex items-center gap-2"><span className="mr-1 shrink-0 text-sm font-medium tabular-nums">已运行 {formatElapsed(runningStartedAt, clockNow)}</span><Button type="button" variant="destructive" size="sm" disabled={busy || Boolean(detail?.task.cancelRequestedAt)} onClick={stopTask}><Square className="mr-2 h-3.5 w-3.5" />{detail?.task.cancelRequestedAt ? '停止中...' : '停止任务'}</Button>{detail?.task.cancelRequestedAt && <Button type="button" variant="outline" size="sm" className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800" disabled={busy} onClick={forceStopTask}><Square className="mr-2 h-3.5 w-3.5" />强制停止</Button>}</div></div>}
     <nav className="grid gap-2 sm:grid-cols-5" aria-label="工作流进度">{PAGE_STEPS.map((step, index) => { const state = stepState(step.key); const done = state === 'approved' || state === 'skipped'; const current = activeStep === step.key || (step.key === 'prompt_planning' && activeStep === 'visual_analysis'); return <div key={step.key} className={`min-w-0 border-l-2 px-3 py-2 text-xs ${current ? 'border-primary bg-accent' : done ? 'border-emerald-500' : 'border-muted'}`}><div className="flex items-center gap-1 font-medium">{done ? <Check className="h-3 w-3 text-emerald-600" /> : <span>{index + 1}.</span>}<span className="truncate">{step.title}</span></div><span className="text-muted-foreground">{state === 'skipped' ? '已跳过' : done ? '已完成' : state === 'awaiting_review' ? '待确认' : state === 'running' ? '处理中' : '未开始'}</span></div>; })}</nav>
     {loading ? <p className="py-16 text-center text-sm text-muted-foreground">正在恢复任务...</p> : <Card><CardContent className="p-4 sm:p-6">{content}</CardContent></Card>}
-    <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 backdrop-blur"><div className="container mx-auto flex items-center justify-end gap-3 p-3 sm:px-6"><Button variant="default" disabled={busy || taskRunning || page === 'product_preparation'} onClick={() => window.history.back()}>上一步</Button><Button disabled={busy || taskRunning || detail?.task.status === 'completed'} onClick={action.onClick}>{taskRunning ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />进行中</> : action.label}</Button></div></div>
+    {detail?.task.status === 'completed' && (
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/30 p-3">
+        <div>
+          <h2 className="text-sm font-medium">导出任务结果</h2>
+          <p className="text-xs text-muted-foreground">可导出报告、提示词、质检结果或资产清单。</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={exportFormat} onValueChange={setExportFormat}>
+            <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="markdown">Markdown 报告</SelectItem>
+              <SelectItem value="json">JSON 全量</SelectItem>
+              <SelectItem value="prompts">提示词包</SelectItem>
+              <SelectItem value="quality_report">质检报告</SelectItem>
+              <SelectItem value="asset_manifest">资产清单</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button type="button" size="sm" disabled={busy} onClick={() => void exportTask()}>
+            <Download className="mr-2 h-4 w-4" />导出
+          </Button>
+        </div>
+      </section>
+    )}
+    <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 backdrop-blur"><div className="container mx-auto flex items-center justify-end gap-3 p-3 sm:px-6"><Button variant="default" disabled={busy || taskRunning || page === 'product_preparation'} onClick={() => router.push('/marketing2')}>返回任务列表</Button><Button disabled={busy || taskRunning || detail?.task.status === 'completed'} onClick={action.onClick}>{taskRunning ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />进行中</> : action.label}</Button></div></div>
   </div>;
 }
 

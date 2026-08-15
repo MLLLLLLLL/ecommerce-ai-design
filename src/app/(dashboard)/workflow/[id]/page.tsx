@@ -258,13 +258,18 @@ function WorkflowEditor() {
   // 消费画布回传的图片：自动创建图片输入节点（借鉴 InvokeAI 画布-工作流双向流转）
   useEffect(() => {
     if (loading) return;
-    const image = useWorkflowBridge.getState().consumeCanvasImage();
-    if (image) {
-      const node = createNode('imageInput', { x: 80, y: 80 });
+    const bridge = useWorkflowBridge.getState();
+    const images = bridge.popWorkflowImages();
+    const legacyImage = bridge.consumeCanvasImage();
+    if (legacyImage) images.push(legacyImage);
+    if (images.length === 0) return;
+
+    setNodes((nds) => nds.concat(images.map((image, index) => {
+      const node = createNode('imageInput', { x: 80 + index * 40, y: 80 + index * 40 });
       node.data.config = { ...node.data.config, imageUrl: image };
-      setNodes((nds) => nds.concat(node));
-      toast.success('已接收画布图片，创建了图片输入节点');
-    }
+      return node;
+    })));
+    toast.success(`已接收 ${images.length} 张图片，创建了图片输入节点`);
   }, [setNodes, loading]);
 
   // 从资源库插入图片：在视口中心创建图片输入节点（与画布回传同一模式）

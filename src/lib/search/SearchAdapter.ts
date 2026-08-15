@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { safeFetch } from '@/lib/security/safe-url';
 
 // ============================================
 // 搜索服务适配器（V3 Phase 7 / ADR-0001）
@@ -129,7 +130,7 @@ export class HttpSearchAdapter implements SearchAdapter {
         const controller = new AbortController();
         const timeoutHandle = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 15000);
 
-        const response = await fetch(this.config.baseURL.replace(/\/+$/, ''), {
+        const response = await safeFetch(this.config.baseURL.replace(/\/+$/, ''), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

@@ -206,83 +206,6 @@ export const marketing2V3ModelSelectionsSchema = z.object({
 export type Marketing2V3ModelSelections = z.infer<typeof marketing2V3ModelSelectionsSchema>;
 
 // --------------------------------------------
-// 工作流 2：marketing2-background-cleanup
-// --------------------------------------------
-
-export const backgroundCleanupInputSchema = z.object({
-  productImages: productImageListSchema,
-  cleanupInstruction: z.string().trim().max(300).optional(),
-});
-
-export type BackgroundCleanupInput = z.infer<typeof backgroundCleanupInputSchema>;
-
-// --------------------------------------------
-// 工作流 3：marketing2-prompt-planning
-// --------------------------------------------
-
-export const promptPlanningInputSchema = z.object({
-  productImages: productImageListSchema,
-  productName: z.string().trim().min(1, '产品名称必填').max(100),
-  parameters: z.record(z.string(), z.string().max(200)).optional(),
-  platform: platformSchema,
-  language: z.string().min(2).max(10).default('zh-CN'),
-  mainImageCount: countField(MAIN_IMAGE_COUNT_RANGE),
-  detailPageCount: countField(DETAIL_PAGE_COUNT_RANGE),
-  sellPoints: z.array(z.string().trim().min(1).max(120)).max(10).default([]),
-});
-
-export type PromptPlanningInput = z.infer<typeof promptPlanningInputSchema>;
-
-// --------------------------------------------
-// 工作流 4：marketing2-batch-generation
-// --------------------------------------------
-
-export const importedPromptSchema = z.object({
-  kind: z.enum(['main_image', 'detail_page']),
-  index: z.number().int().min(1).max(30),
-  keyword: z.string().trim().max(60).default(''),
-  prompt: z.string().trim().min(1, '提示词不能为空').max(4000),
-  negativePrompt: z.string().trim().max(1000).optional(),
-});
-
-export const batchGenerationInputSchema = z
-  .object({
-    productName: z.string().trim().min(1, '产品名称必填').max(100),
-    referenceImages: z.array(z.string().min(1).max(2000)).min(1, '至少提供 1 张参考图').max(5),
-    prompts: z.array(importedPromptSchema).min(1, '至少提供 1 条提示词').max(TOTAL_IMAGE_ITEM_LIMIT),
-    mainImageRatio: ratioSchema,
-    detailPageRatio: ratioSchema,
-    /** 批量提交开关（交互 6.4）：服务端始终按并发上限拆分执行。 */
-    batchSubmit: z.boolean().default(true),
-  })
-  .superRefine((value, ctx) => {
-    if (value.prompts.length > TOTAL_IMAGE_ITEM_LIMIT) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['prompts'],
-        message: `提示词数量 ${value.prompts.length} 超过上限 ${TOTAL_IMAGE_ITEM_LIMIT}`,
-      });
-    }
-  });
-
-export type BatchGenerationInput = z.infer<typeof batchGenerationInputSchema>;
-export type ImportedPrompt = z.infer<typeof importedPromptSchema>;
-
-// --------------------------------------------
-// 工作流 5：marketing2-quality-repair
-// --------------------------------------------
-
-export const qualityRepairInputSchema = z.object({
-  assetIds: z
-    .array(z.string().min(1))
-    .min(1, '至少提供 1 张已生成图片')
-    .max(TOTAL_IMAGE_ITEM_LIMIT),
-  productName: z.string().trim().max(100).optional(),
-});
-
-export type QualityRepairInput = z.infer<typeof qualityRepairInputSchema>;
-
-// --------------------------------------------
 // 步骤输出 Schema（审批时服务端只接受合法字段）
 // --------------------------------------------
 
@@ -404,20 +327,12 @@ export type RepairIssueType = (typeof REPAIR_ISSUE_TYPES)[number];
 
 export const WORKFLOW_KEYS = [
   'marketing2-image-detail-full',
-  'marketing2-background-cleanup',
-  'marketing2-prompt-planning',
-  'marketing2-batch-generation',
-  'marketing2-quality-repair',
 ] as const;
 
 export type WorkflowKey = (typeof WORKFLOW_KEYS)[number];
 
 export type WorkflowInputMap = {
   'marketing2-image-detail-full': FullWorkflowInput;
-  'marketing2-background-cleanup': BackgroundCleanupInput;
-  'marketing2-prompt-planning': PromptPlanningInput;
-  'marketing2-batch-generation': BatchGenerationInput;
-  'marketing2-quality-repair': QualityRepairInput;
 };
 
 /** 按 workflowKey 校验任务输入；非法时抛出带字段定位的 Marketing2Error。 */
@@ -426,14 +341,6 @@ export function parseWorkflowInput(workflowKey: string, input: unknown): unknown
     switch (workflowKey) {
       case 'marketing2-image-detail-full':
         return fullWorkflowInputSchema.safeParse(input);
-      case 'marketing2-background-cleanup':
-        return backgroundCleanupInputSchema.safeParse(input);
-      case 'marketing2-prompt-planning':
-        return promptPlanningInputSchema.safeParse(input);
-      case 'marketing2-batch-generation':
-        return batchGenerationInputSchema.safeParse(input);
-      case 'marketing2-quality-repair':
-        return qualityRepairInputSchema.safeParse(input);
       default:
         throw new Marketing2Error('WORKFLOW_NOT_FOUND', `未知工作流：${workflowKey}`, {
           httpStatus: 404,

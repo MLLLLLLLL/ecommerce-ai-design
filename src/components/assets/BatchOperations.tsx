@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
@@ -27,13 +27,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { MoreVertical, Tag, FolderInput, Trash2 } from 'lucide-react';
+import { MoreVertical, Tag, FolderInput, Trash2, Layout, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface BatchOperationsProps {
   selectedIds: string[];
   onClearSelection: () => void;
   onOperationComplete: () => void;
+  onAddToCanvas: () => void;
+  onAddToWorkflow: () => void;
 }
 
 interface Tag {
@@ -51,6 +53,8 @@ export function BatchOperations({
   selectedIds,
   onClearSelection,
   onOperationComplete,
+  onAddToCanvas,
+  onAddToWorkflow,
 }: BatchOperationsProps) {
   const [tags, setTags] = useState<Tag[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -60,12 +64,7 @@ export function BatchOperations({
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
 
-  useEffect(() => {
-    loadTags();
-    loadFolders();
-  }, []);
-
-  const loadTags = async () => {
+  const loadTags = useCallback(async () => {
     try {
       const response = await fetch('/api/tags');
       const data = await response.json();
@@ -75,9 +74,9 @@ export function BatchOperations({
     } catch (error) {
       console.error('Failed to load tags:', error);
     }
-  };
+  }, []);
 
-  const loadFolders = async () => {
+  const loadFolders = useCallback(async () => {
     try {
       const response = await fetch('/api/folders');
       const data = await response.json();
@@ -87,7 +86,14 @@ export function BatchOperations({
     } catch (error) {
       console.error('Failed to load folders:', error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    // 打开批量操作栏时同步拉取标签和文件夹选项。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadTags();
+    void loadFolders();
+  }, [loadFolders, loadTags]);
 
   const handleBatchOperation = async (action: string) => {
     if (selectedIds.length === 0) {
@@ -98,7 +104,10 @@ export function BatchOperations({
     setProcessing(true);
 
     try {
-      let requestData: any = { action, assetIds: selectedIds };
+      const requestData: { action: string; assetIds: string[]; data?: unknown } = {
+        action,
+        assetIds: selectedIds,
+      };
 
       if (action === 'addTags') {
         if (selectedTags.length === 0) {
@@ -127,9 +136,9 @@ export function BatchOperations({
       setDialogOpen(false);
       onClearSelection();
       onOperationComplete();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Batch operation error:', error);
-      toast.error(error.message || '操作失败');
+      toast.error(error instanceof Error ? error.message : '操作失败');
     } finally {
       setProcessing(false);
     }
@@ -168,6 +177,14 @@ export function BatchOperations({
           <DropdownMenuItem onClick={() => openDialog('move')}>
             <FolderInput className="mr-2 h-4 w-4" />
             移动到文件夹
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onAddToCanvas}>
+            <Layout className="mr-2 h-4 w-4" />
+            添加到画布
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onAddToWorkflow}>
+            <Workflow className="mr-2 h-4 w-4" />
+            添加到工作流
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

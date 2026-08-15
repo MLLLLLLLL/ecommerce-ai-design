@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
+import { getCurrentUser } from '@/lib/auth/current-user';
 
 // GET /api/folders/[id] - 获取单个文件夹
 export async function GET(
@@ -8,8 +9,9 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const folder = await prisma.folder.findUnique({
-      where: { id },
+    const user = await getCurrentUser();
+    const folder = await prisma.folder.findFirst({
+      where: { id, userId: user.id },
       include: {
         parent: true,
         children: {
@@ -56,6 +58,7 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+    const user = await getCurrentUser();
     const body = await req.json();
     const { name, description, color, parentId } = body;
 
@@ -71,8 +74,8 @@ export async function PATCH(
       }
 
       // 获取当前文件夹
-      const currentFolder = await prisma.folder.findUnique({
-        where: { id },
+      const currentFolder = await prisma.folder.findFirst({
+        where: { id, userId: user.id },
       });
 
       if (!currentFolder) {
@@ -112,22 +115,21 @@ export async function PATCH(
           { status: 400 }
         );
       }
+      if (parentId && !(await prisma.folder.findFirst({ where: { id: parentId, userId: user.id } }))) {
+        return NextResponse.json({ success: false, error: 'Parent folder not found' }, { status: 404 });
+      }
       updateData.parentId = parentId || null;
     }
 
-    const folder = await prisma.folder.update({
-      where: { id },
+    const updated = await prisma.folder.updateMany({
+      where: { id, userId: user.id },
       data: updateData,
-      include: {
-        _count: {
-          select: { assets: true, children: true },
-        },
-      },
     });
+    if (!updated.count) return NextResponse.json({ success: false, error: 'Folder not found' }, { status: 404 });
 
     return NextResponse.json({
       success: true,
-      folder,
+      folder: await prisma.folder.findFirst({ where: { id, userId: user.id }, include: { _count: { select: { assets: true, children: true } } } }),
     });
   } catch (error: any) {
     console.error('[API] Update folder error:', error);
@@ -145,9 +147,10 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    const user = await getCurrentUser();
     // 检查文件夹是否有子文件夹或资源
-    const folder = await prisma.folder.findUnique({
-      where: { id },
+    const folder = await prisma.folder.findFirst({
+      where: { id, userId: user.id },
       include: {
         _count: {
           select: { assets: true, children: true },
@@ -176,9 +179,7 @@ export async function DELETE(
       );
     }
 
-    await prisma.folder.delete({
-      where: { id },
-    });
+    await prisma.folder.deleteMany({ where: { id, userId: user.id } });
 
     return NextResponse.json({
       success: true,

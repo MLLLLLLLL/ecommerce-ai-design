@@ -100,7 +100,11 @@ export async function createRun(userId: string, rawRequest: unknown, idempotency
 
   const input = parseWorkflowInput(workflow.key, request.input);
 
-  await validateDraftModels(userId, request.stepModels, request.workflowVersion ?? workflow.version);
+  const workflowVersion = request.workflowVersion ?? workflow.version;
+  if (workflowVersion < 3) {
+    throw new Marketing2Error('TASK_STATE_INVALID', '只能创建当前版本的主流程任务', { httpStatus: 409 });
+  }
+  await validateDraftModels(userId, request.stepModels);
 
   const inputRecord = input as Record<string, unknown>;
   const productName =
@@ -122,7 +126,7 @@ export async function createRun(userId: string, rawRequest: unknown, idempotency
         userId,
         module: MARKETING2_MODULE,
         workflowKey: workflow.key,
-        workflowVersion: request.workflowVersion ?? workflow.version,
+        workflowVersion,
         productName: request.title ?? productName,
         productImages,
         platform,
@@ -203,6 +207,10 @@ export async function updateRun(userId: string, taskId: string, rawBody: unknown
 
   const task = await findOwnedTask(userId, taskId);
 
+  if (task.workflowVersion < 3) {
+    throw new Marketing2Error('TASK_STATE_INVALID', '历史任务仅支持只读查看，不能编辑', { httpStatus: 409 });
+  }
+
   if (['completed', 'cancelled'].includes(task.status)) {
     throw new Marketing2Error('TASK_STATE_INVALID', '任务已结束，不能再编辑', { httpStatus: 409 });
   }
@@ -234,7 +242,7 @@ export async function updateRun(userId: string, taskId: string, rawBody: unknown
 
   if (body.stepModels !== undefined) {
     rejectForbiddenFields(body.stepModels);
-    await validateDraftModels(userId, body.stepModels, task.workflowVersion);
+    await validateDraftModels(userId, body.stepModels);
     data.stepModels = body.stepModels as Prisma.InputJsonValue;
   }
 
@@ -252,42 +260,36 @@ export async function updateRun(userId: string, taskId: string, rawBody: unknown
   return prisma.marketingTask.findUniqueOrThrow({ where: { id: taskId } });
 }
 
-/** 删除任务；强制删除仅用于用户明确确认的历史清理。 */
+const DRAFT_RUN_STATUSES = new Set(['draft', 'awaiting_review', 'running_step', 'partial_failed']);
+
+/** 删除任务；草稿生命周期内的所有阶段都允许删除，force 仍用于历史任务清理。 */
 export async function deleteRun(userId: string, taskId: string, force = false): Promise<void> {
   const task = await findOwnedTask(userId, taskId);
-  if (task.status !== 'draft' && !force) {
+  if (!DRAFT_RUN_STATUSES.has(task.status) && !force) {
     throw new Marketing2Error('TASK_STATE_INVALID', '只有草稿任务可以删除', { httpStatus: 409 });
   }
 
   await prisma.marketingTask.delete({ where: { id: taskId } });
 }
 
-async function validateDraftModels(userId: string, rawModels: unknown, workflowVersion: number): Promise<void> {
+async function validateDraftModels(userId: string, rawModels: unknown): Promise<void> {
   if (!rawModels || typeof rawModels !== 'object' || Array.isArray(rawModels)) {
     throw new Marketing2Error('INPUT_INVALID', '模型选择格式不正确');
   }
-  if (workflowVersion >= 3) {
-    const parsed = marketing2V3ModelSelectionsSchema.safeParse(rawModels);
-    if (!parsed.success) {
-      throw new Marketing2Error('INPUT_INVALID', 'V3 模型选择格式不正确', { fieldErrors: zodFieldErrors(parsed.error) });
-    }
-    const selections = parsed.data;
-    const checks: Array<[string | undefined, ModelCapabilityKey[]]> = [
-      [selections.backgroundCleanup, STEP_CAPABILITY_MATRIX.background_cleanup],
-      [selections.visualAnalysis, STEP_CAPABILITY_MATRIX.visual_analysis],
-      [selections.promptGeneration, STEP_CAPABILITY_MATRIX.prompt_planning],
-      ...Object.values(selections.imageGeneration.items).map((id) => [id, STEP_CAPABILITY_MATRIX.batch_generation] as [string, ModelCapabilityKey[]]),
-      ...Object.values(selections.quality.items).map((id) => [id, STEP_CAPABILITY_MATRIX.quality_repair] as [string, ModelCapabilityKey[]]),
-      ...Object.values(selections.repair.items).map((id) => [id, STEP_CAPABILITY_MATRIX['quality_repair:repair']] as [string, ModelCapabilityKey[]]),
-    ];
-    for (const [modelId, capabilities] of checks) if (modelId) await validateModelForDraft(userId, modelId, capabilities);
-    return;
+  const parsed = marketing2V3ModelSelectionsSchema.safeParse(rawModels);
+  if (!parsed.success) {
+    throw new Marketing2Error('INPUT_INVALID', 'V3 模型选择格式不正确', { fieldErrors: zodFieldErrors(parsed.error) });
   }
-  for (const [stepKey, modelId] of Object.entries(rawModels as Record<string, unknown>)) {
-    if (typeof modelId === 'string' && modelId) {
-      await validateModelForDraft(userId, modelId, (STEP_CAPABILITY_MATRIX[stepKey] ?? []) as ModelCapabilityKey[]);
-    }
-  }
+  const selections = parsed.data;
+  const checks: Array<[string | undefined, ModelCapabilityKey[]]> = [
+    [selections.backgroundCleanup, STEP_CAPABILITY_MATRIX.background_cleanup],
+    [selections.visualAnalysis, STEP_CAPABILITY_MATRIX.visual_analysis],
+    [selections.promptGeneration, STEP_CAPABILITY_MATRIX.prompt_planning],
+    ...Object.values(selections.imageGeneration.items).map((id) => [id, STEP_CAPABILITY_MATRIX.batch_generation] as [string, ModelCapabilityKey[]]),
+    ...Object.values(selections.quality.items).map((id) => [id, STEP_CAPABILITY_MATRIX.quality_repair] as [string, ModelCapabilityKey[]]),
+    ...Object.values(selections.repair.items).map((id) => [id, STEP_CAPABILITY_MATRIX['quality_repair:repair']] as [string, ModelCapabilityKey[]]),
+  ];
+  for (const [modelId, capabilities] of checks) if (modelId) await validateModelForDraft(userId, modelId, capabilities);
 }
 
 const patchModelSelectionsSchema = z.object({
@@ -306,7 +308,7 @@ export async function patchV3ModelSelections(userId: string, taskId: string, raw
   }
   const task = await findOwnedTask(userId, taskId);
   if (task.workflowVersion < 3) {
-    throw new Marketing2Error('STEP_STATE_INVALID', '历史任务不使用 V3 模型选择结构', { httpStatus: 409 });
+    throw new Marketing2Error('TASK_STATE_INVALID', '历史任务仅支持只读查看，不能修改模型选择', { httpStatus: 409 });
   }
   if (task.taskVersion !== parsed.data.expectedVersion) {
     throw new Marketing2Error('VERSION_CONFLICT', '任务已被其它操作更新，请刷新后重试', { httpStatus: 409 });
@@ -440,23 +442,36 @@ export interface ListRunsFilters {
 
 export async function listRuns(userId: string, filters: ListRunsFilters) {
   const limit = Math.min(filters.limit ?? 20, 50);
+  const cursorParts = filters.cursor?.split('|') ?? [];
+  const cursorDate = cursorParts[0] ? new Date(cursorParts[0]) : null;
+  const cursorId = cursorParts[1] || null;
   const where: Prisma.MarketingTaskWhereInput = {
     userId,
     module: MARKETING2_MODULE,
     ...(filters.status?.length ? { status: { in: filters.status } } : {}),
     ...(filters.workflowKey ? { workflowKey: filters.workflowKey } : {}),
-    ...(filters.cursor ? { createdAt: { lt: new Date(filters.cursor) } } : {}),
+    ...(cursorDate && !Number.isNaN(cursorDate.getTime())
+      ? cursorId
+        ? {
+            OR: [
+              { createdAt: { lt: cursorDate } },
+              { createdAt: cursorDate, id: { lt: cursorId } },
+            ],
+          }
+        : { createdAt: { lt: cursorDate } }
+      : {}),
   };
 
   const runs = await prisma.marketingTask.findMany({
     where,
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit + 1,
   });
 
   const hasMore = runs.length > limit;
   const page = hasMore ? runs.slice(0, limit) : runs;
-  const nextCursor = hasMore ? page[page.length - 1].createdAt.toISOString() : null;
+  const last = page[page.length - 1];
+  const nextCursor = hasMore ? `${last.createdAt.toISOString()}|${last.id}` : null;
 
   return {
     runs: page.map((task) => ({
@@ -491,9 +506,7 @@ export async function listWorkflowCards(userId: string) {
     _max: { updatedAt: true },
   });
 
-  return WORKFLOW_REGISTRY
-    .filter((workflow) => workflow.discoverable)
-    .map((workflow) => buildCardStatus(workflow, capabilitiesList, recentRuns));
+  return WORKFLOW_REGISTRY.map((workflow) => buildCardStatus(workflow, capabilitiesList, recentRuns));
 }
 
 type GroupedRun = {
@@ -553,7 +566,6 @@ function buildCardStatus(
     requiredInputs: workflow.requiredInputs,
     optionalInputs: workflow.optionalInputs,
     outputTypes: workflow.outputTypes,
-    importSources: workflow.importSources,
     steps: workflow.steps.map((step) => ({
       key: step.key,
       order: step.order,

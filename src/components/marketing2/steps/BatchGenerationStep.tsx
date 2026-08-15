@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { Loader2, Maximize2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
 import { ImagePreviewDialog, type PreviewImage } from '@/components/marketing2/ImagePreviewDialog';
 import type { RunDetail, RunItemApi } from '@/components/marketing2/hooks/use-marketing2-run';
@@ -46,20 +45,16 @@ export function BatchGenerationStep({
   onRetryItem,
   onRetryAllFailed,
   onPauseToggle,
-  onBatchSubmitChange,
   busy,
 }: {
   detail: RunDetail;
   onRetryItem: (itemId: string) => void;
   onRetryAllFailed: () => void;
   onPauseToggle: () => void;
-  onBatchSubmitChange: (value: boolean) => void;
   busy: boolean;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
-  const input = (detail.task.input ?? {}) as Record<string, unknown>;
-  const batchSubmit = input.batchSubmit !== false;
   const items = detail.items.filter(
     (item) => item.stepKey === 'batch_generation' && (item.kind.startsWith('main_image:') || item.kind.startsWith('detail_page:'))
   );
@@ -77,15 +72,6 @@ export function BatchGenerationStep({
 
   return (
     <div className="space-y-4">
-      <label className="flex items-center gap-2 text-sm">
-        <Checkbox
-          checked={batchSubmit}
-          disabled={items.length > 0 || busy}
-          onCheckedChange={(checked) => onBatchSubmitChange(checked === true)}
-        />
-        批量提交（服务端仍按并发上限拆分执行）
-      </label>
-
       {items.length > 0 && (
         <div className="space-y-1">
           <div className="flex items-center justify-between text-xs text-muted-foreground">

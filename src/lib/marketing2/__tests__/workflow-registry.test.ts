@@ -17,13 +17,9 @@ import {
 // ============================================
 
 describe('workflow registry', () => {
-  it('冻结五个 workflowKey', () => {
+  it('只保留主图详情页全自动生成 workflowKey', () => {
     expect(WORKFLOW_REGISTRY.map((workflow) => workflow.key)).toEqual([
       'marketing2-image-detail-full',
-      'marketing2-background-cleanup',
-      'marketing2-prompt-planning',
-      'marketing2-batch-generation',
-      'marketing2-quality-repair',
     ]);
   });
 

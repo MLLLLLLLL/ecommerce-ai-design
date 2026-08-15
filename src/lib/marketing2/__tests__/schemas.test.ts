@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertTotalImageLimit,
-  batchGenerationInputSchema,
   buildImageFilename,
   fullWorkflowInputSchema,
   Marketing2Error,
@@ -66,30 +65,6 @@ describe('full workflow input schema', () => {
     expect(() => assertTotalImageLimit(15, 16)).toThrow(Marketing2Error);
     expect(() => assertTotalImageLimit(10, 20)).not.toThrow();
     expect(TOTAL_IMAGE_ITEM_LIMIT).toBe(30);
-  });
-});
-
-describe('batch generation input schema', () => {
-  it('要求参考图与提示词', () => {
-    const result = batchGenerationInputSchema.safeParse({
-      productName: '产品',
-      referenceImages: [],
-      prompts: [{ kind: 'main_image', index: 1, prompt: '提示词' }],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('提示词上限 30 条', () => {
-    const result = batchGenerationInputSchema.safeParse({
-      productName: '产品',
-      referenceImages: ['/img/ref.png'],
-      prompts: Array.from({ length: 31 }, (_, i) => ({
-        kind: 'main_image',
-        index: i + 1,
-        prompt: `提示词${i}`,
-      })),
-    });
-    expect(result.success).toBe(false);
   });
 });
 
@@ -159,14 +134,13 @@ describe('parseWorkflowInput', () => {
     expect(() => parseWorkflowInput('unknown-workflow', {})).toThrowError(Marketing2Error);
   });
 
-  it('非法输入抛 INPUT_INVALID 并带字段错误', () => {
+  it('已移除的独立工作流返回 WORKFLOW_NOT_FOUND', () => {
     try {
       parseWorkflowInput('marketing2-background-cleanup', { productImages: [] });
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(Marketing2Error);
-      expect((error as Marketing2Error).code).toBe('INPUT_INVALID');
-      expect((error as Marketing2Error).fieldErrors).toBeTruthy();
+      expect((error as Marketing2Error).code).toBe('WORKFLOW_NOT_FOUND');
     }
   });
 });

@@ -54,15 +54,21 @@ export function useTaskPolling() {
 
   const poll = useCallback(async (taskId: string) => {
     stop();
+    setDetail(null);
+    setError(null);
     let count = 0;
+    let failures = 0;
     const tick = async () => {
       try {
         const response = await fetch(`/api/marketing/tasks/${taskId}`);
         const data = await response.json();
         if (!response.ok || !data.success) {
-          setError(data.error?.message || '查询任务失败');
+          failures += 1;
+          if (failures >= 5) setError(data.error?.message || '查询任务失败，请稍后重试');
+          else timerRef.current = setTimeout(() => void tick(), Math.min(8000, POLL_INTERVAL_MS * 2 ** failures));
           return;
         }
+        failures = 0;
         const next = data.data as TaskDetail;
         setDetail(next);
         if (TERMINAL_TASK_STATUSES.has(next.status)) {
@@ -75,7 +81,9 @@ export function useTaskPolling() {
         }
         timerRef.current = setTimeout(() => void tick(), POLL_INTERVAL_MS);
       } catch (pollError) {
-        setError(pollError instanceof Error ? pollError.message : '查询任务失败');
+        failures += 1;
+        if (failures >= 5) setError(pollError instanceof Error ? pollError.message : '查询任务失败，请稍后重试');
+        else timerRef.current = setTimeout(() => void tick(), Math.min(8000, POLL_INTERVAL_MS * 2 ** failures));
       }
     };
     await tick();

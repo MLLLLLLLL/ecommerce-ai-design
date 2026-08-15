@@ -2,7 +2,6 @@
 
 import { Suspense, use } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { WorkflowRunner } from '@/components/marketing2/WorkflowRunner';
 import { WorkflowWizardV3 } from '@/components/marketing2-v3/WorkflowWizard';
 
 // ============================================
@@ -16,7 +15,7 @@ function RunnerWithSearch({ workflowKey }: { workflowKey: string }) {
   return (
     workflowKey === 'marketing2-image-detail-full' ? (
       <WorkflowWizardV3 key={`${workflowKey}:${runId ?? 'new'}`} initialRunId={runId} />
-    ) : <WorkflowRunner key={`${workflowKey}:${runId ?? 'new'}`} workflowKey={workflowKey} initialRunId={runId} />
+    ) : <p className="p-8 text-center text-sm text-destructive">未知工作流：{workflowKey}</p>
   );
 }
 

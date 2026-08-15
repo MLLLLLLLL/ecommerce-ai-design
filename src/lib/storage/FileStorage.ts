@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 import { createHash } from 'crypto';
+import { safeFetch } from '@/lib/security/safe-url';
 
 /**
  * 文件存储配置
@@ -48,10 +49,17 @@ export class FileStorage {
 
   async saveFromUrl(url: string, filename?: string): Promise<FileInfo> {
     try {
-      const response = await fetch(url);
+      if (url.startsWith('data:')) {
+        const comma = url.indexOf(',');
+        if (comma < 0) throw new Error('Invalid data URL');
+        return await this.saveFromBuffer(Buffer.from(url.slice(comma + 1), 'base64'), filename);
+      }
+      const response = await safeFetch(url);
       if (!response.ok) {
         throw new Error(`Failed to download: ${response.statusText}`);
       }
+      const contentLength = Number(response.headers.get('content-length') ?? 0);
+      if (contentLength > this.config.maxSize) throw new Error('Downloaded file exceeds size limit');
       const buffer = Buffer.from(await response.arrayBuffer());
       return await this.saveFromBuffer(buffer, filename);
     } catch (error) {
@@ -117,6 +125,34 @@ export class FileStorage {
       console.error('[FileStorage] Failed to save from buffer:', error);
       throw error;
     }
+  }
+
+  /** 保存非图片对象（JSON、Markdown 等），不经过 Sharp 图片解析。 */
+  async saveObjectFromBuffer(buffer: Buffer, filename: string): Promise<FileInfo> {
+    if (buffer.length > this.config.maxSize) {
+      throw new Error(`File size exceeds limit: ${this.config.maxSize} bytes`);
+    }
+    const safeFilename = path.basename(filename);
+    if (!safeFilename || safeFilename !== filename || safeFilename.includes('..')) {
+      throw new Error('Invalid filename');
+    }
+    const hash = this.calculateHash(buffer);
+    const filepath = path.join(this.config.baseDir, safeFilename);
+    if (!(await this.fileExists(filepath))) {
+      const tempPath = `${filepath}.${hash}.tmp`;
+      await fs.writeFile(tempPath, buffer, { flag: 'wx' }).catch(async (error) => {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      });
+      if (!(await this.fileExists(filepath))) await fs.rename(tempPath, filepath);
+      else await fs.unlink(tempPath).catch(() => undefined);
+    }
+    return {
+      filename: safeFilename,
+      filepath,
+      size: buffer.length,
+      format: path.extname(safeFilename).slice(1).toLowerCase() || 'bin',
+      hash,
+    };
   }
 
   private async generateThumbnail(buffer: Buffer, hash: string, format: string): Promise<string> {

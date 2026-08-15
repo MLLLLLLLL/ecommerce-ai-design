@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 // 密钥拒绝、非法 workflowKey、版本冲突、幂等键、重试门禁。
 // ============================================
 
-const WORKFLOW = 'marketing2-background-cleanup';
+const WORKFLOW = 'marketing2-image-detail-full';
 
 /** 1x1 PNG，用于真实上传。 */
 const TINY_PNG_BASE64 =
@@ -32,9 +32,16 @@ async function createDraft(
   input: Record<string, unknown>,
   idempotencyKey = `api-test-create-${randomUUID()}`
 ) {
+  const mergedInput = {
+    productImages: ['/api/files/user-data/marketing/x.png'],
+    productName: 'API 测试产品',
+    mainImageCount: 'auto',
+    detailPageCount: 'auto',
+    ...input,
+  };
   return request.post('/api/marketing2/runs', {
     headers: { 'Idempotency-Key': idempotencyKey },
-    data: { workflowKey: WORKFLOW, input, stepModels: {} },
+    data: { workflowKey: WORKFLOW, input: mergedInput, stepModels: {} },
   });
 }
 
@@ -54,7 +61,12 @@ test.describe('API 契约', () => {
       headers: { 'Idempotency-Key': 'api-test-forbidden-step-models' },
       data: {
         workflowKey: WORKFLOW,
-        input: { productImages: ['/api/files/user-data/marketing/x.png'] },
+        input: {
+          productImages: ['/api/files/user-data/marketing/x.png'],
+          productName: 'API 测试产品',
+          mainImageCount: 'auto',
+          detailPageCount: 'auto',
+        },
         stepModels: { secret: 'abc' },
       },
     });
@@ -85,7 +97,12 @@ test.describe('API 契约', () => {
     const response = await request.post('/api/marketing2/runs', {
       data: {
         workflowKey: WORKFLOW,
-        input: { productImages: ['/api/files/user-data/marketing/x.png'] },
+        input: {
+          productImages: ['/api/files/user-data/marketing/x.png'],
+          productName: 'API 测试产品',
+          mainImageCount: 'auto',
+          detailPageCount: 'auto',
+        },
         stepModels: {},
       },
     });
@@ -98,7 +115,12 @@ test.describe('API 契约', () => {
     const idempotencyKey = 'api-test-create-deduplication';
     const data = {
       workflowKey: WORKFLOW,
-      input: { productImages: ['/api/files/user-data/marketing/x.png'] },
+      input: {
+        productImages: ['/api/files/user-data/marketing/x.png'],
+        productName: 'API 测试产品',
+        mainImageCount: 'auto',
+        detailPageCount: 'auto',
+      },
       stepModels: {},
     };
 

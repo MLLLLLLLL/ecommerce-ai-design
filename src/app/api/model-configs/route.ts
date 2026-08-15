@@ -4,6 +4,7 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { prisma } from '@/lib/db/prisma';
 import { toModelConfigSummary } from '@/lib/model-configs';
 import { encryptServerSecret } from '@/lib/security/server-encryption';
+import { assertSafeOutboundUrl } from '@/lib/security/safe-url';
 
 const capabilitiesSchema = z.object({
   vision: z.boolean(),
@@ -44,6 +45,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = createModelSchema.parse(await request.json());
+    await assertSafeOutboundUrl(body.baseURL);
     const user = await getCurrentUser();
     const baseURL = body.baseURL.replace(/\/+$/, '');
 
@@ -78,6 +80,9 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ success: false, error: '模型配置字段不完整或格式不正确' }, { status: 400 });
+    }
+    if (error instanceof Error && /上游地址|内网|HTTPS|内部主机|解析/.test(error.message)) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
     }
     console.error('[API] Create model config error:', error);
     return NextResponse.json({ success: false, error: '保存模型配置失败' }, { status: 500 });

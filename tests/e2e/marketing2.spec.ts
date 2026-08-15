@@ -77,7 +77,7 @@ test.describe('工作流运行页', () => {
   });
 
   test('草稿保存后刷新恢复（任务版本不丢失）', async ({ page }) => {
-    await page.goto('/marketing2/marketing2-prompt-planning');
+    await page.goto('/marketing2/marketing2-image-detail-full');
     await page.waitForLoadState('networkidle');
 
     const nameInput = page.locator('xpath=//label[contains(text(),"产品名称")]/following::input[1]');
@@ -91,8 +91,7 @@ test.describe('工作流运行页', () => {
     });
     await expect(page.getByAltText('产品图 1')).toBeVisible({ timeout: 10_000 });
 
-    await page.getByRole('button', { name: '保存草稿' }).click();
-    await expect(page.getByText('草稿已保存', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: '保存并继续' }).click();
 
     // URL 应写入 runId
     await page.waitForURL(/runId=/);

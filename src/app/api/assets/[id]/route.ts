@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { FileStorage } from '@/lib/storage/FileStorage';
+import { getCurrentUser } from '@/lib/auth/current-user';
 
 // GET /api/assets/[id] - 获取单个资源详情
 export async function GET(
@@ -9,8 +10,9 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const asset = await prisma.asset.findUnique({
-      where: { id },
+    const user = await getCurrentUser();
+    const asset = await prisma.asset.findFirst({
+      where: { id, userId: user.id },
       include: {
         tags: true,
         folder: true,
@@ -45,6 +47,7 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+    const user = await getCurrentUser();
     const body = await req.json();
     const { folderId, tagIds, projectId } = body;
 
@@ -65,6 +68,8 @@ export async function PATCH(
       };
     }
 
+    const owned = await prisma.asset.findFirst({ where: { id, userId: user.id } });
+    if (!owned) return NextResponse.json({ success: false, error: 'Asset not found' }, { status: 404 });
     const asset = await prisma.asset.update({
       where: { id },
       data: updateData,
@@ -95,9 +100,10 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    const user = await getCurrentUser();
     // 获取资源信息
-    const asset = await prisma.asset.findUnique({
-      where: { id },
+    const asset = await prisma.asset.findFirst({
+      where: { id, userId: user.id },
     });
 
     if (!asset) {
@@ -120,9 +126,7 @@ export async function DELETE(
     }
 
     // 删除数据库记录
-    await prisma.asset.delete({
-      where: { id },
-    });
+    await prisma.asset.deleteMany({ where: { id, userId: user.id } });
 
     return NextResponse.json({
       success: true,

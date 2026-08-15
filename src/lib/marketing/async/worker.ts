@@ -129,7 +129,7 @@ async function claimCandidate(item: MarketingTaskItem): Promise<MarketingTaskIte
     },
     data: {
       status: 'running',
-      leaseOwner: WORKER_ID,
+      leaseOwner: `${WORKER_ID}:${randomUUID()}`,
       leaseExpiresAt: new Date(now.getTime() + LEASE_DURATION_MS),
       attempts: { increment: 1 },
       startedAt: now,
@@ -164,12 +164,18 @@ async function aggregateTaskByModule(taskId: string): Promise<void> {
 
 async function executeClaimed(item: MarketingTaskItem): Promise<void> {
   const startedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    void prisma.marketingTaskItem.updateMany({
+      where: { id: item.id, status: 'running', leaseOwner: item.leaseOwner },
+      data: { leaseExpiresAt: new Date(Date.now() + LEASE_DURATION_MS) },
+    });
+  }, Math.max(30_000, Math.floor(LEASE_DURATION_MS / 3)));
   try {
     const task = await prisma.marketingTask.findUnique({ where: { id: item.taskId } });
     if (!task) return;
     if (task.cancelRequestedAt) {
-      await prisma.marketingTaskItem.update({
-        where: { id: item.id },
+      await prisma.marketingTaskItem.updateMany({
+        where: { id: item.id, status: 'running', leaseOwner: item.leaseOwner },
         data: { status: 'cancelled', completedAt: new Date() },
       });
       await aggregateTaskByModule(item.taskId);
@@ -181,7 +187,7 @@ async function executeClaimed(item: MarketingTaskItem): Promise<void> {
     const result = await executeMarketingItem(task, item);
     const now = new Date();
     const completed = await prisma.marketingTaskItem.updateMany({
-      where: { id: item.id, status: 'running', leaseOwner: WORKER_ID },
+      where: { id: item.id, status: 'running', leaseOwner: item.leaseOwner },
       data: {
         status: 'completed',
         result: result as Prisma.InputJsonValue,
@@ -216,10 +222,10 @@ async function executeClaimed(item: MarketingTaskItem): Promise<void> {
   } catch (error) {
     const latestItem = await prisma.marketingTaskItem.findUnique({
       where: { id: item.id },
-      select: { status: true },
+      select: { status: true, leaseOwner: true },
     });
     // 强制停止后忽略迟到的异常，不允许把 cancelled 改回 pending/failed。
-    if (latestItem?.status === 'cancelled') {
+    if (latestItem?.status === 'cancelled' || latestItem?.leaseOwner !== item.leaseOwner) {
       await aggregateTaskByModule(item.taskId);
       return;
     }
@@ -228,8 +234,8 @@ async function executeClaimed(item: MarketingTaskItem): Promise<void> {
 
     if (attempts < item.maxAttempts) {
       // 未达上限：回退 pending 等待重试（租约清空）
-      await prisma.marketingTaskItem.update({
-        where: { id: item.id },
+      await prisma.marketingTaskItem.updateMany({
+        where: { id: item.id, status: 'running', leaseOwner: item.leaseOwner },
         data: {
           status: 'pending',
           error: message,
@@ -248,8 +254,8 @@ async function executeClaimed(item: MarketingTaskItem): Promise<void> {
         `[MarketingWorker] item=${item.id} kind=${item.kind} attempt=${attempts} failed, will retry: ${message.slice(0, 200)}`
       );
     } else {
-      await prisma.marketingTaskItem.update({
-        where: { id: item.id },
+      await prisma.marketingTaskItem.updateMany({
+        where: { id: item.id, status: 'running', leaseOwner: item.leaseOwner },
         data: {
           status: 'failed',
           error: message,
@@ -267,6 +273,9 @@ async function executeClaimed(item: MarketingTaskItem): Promise<void> {
       );
       await aggregateTaskByModule(item.taskId);
     }
+  }
+  finally {
+    clearInterval(heartbeat);
   }
 }
 

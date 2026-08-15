@@ -17,7 +17,6 @@ export interface WorkflowCardApi {
   requiredInputs: string[];
   optionalInputs: string[];
   outputTypes: string[];
-  importSources: string[];
   steps: {
     key: string;
     order: number;
@@ -120,10 +119,11 @@ const jsonInit = (method: string, body: unknown, idempotencyKey?: string): Reque
 export const marketing2Api = {
   workflows: () =>
     request<{ workflows: WorkflowCardApi[] }>('/api/marketing2/workflows').then((d) => d.workflows),
-  runs: (params?: { status?: string; workflowKey?: string; limit?: number }) => {
+  runs: (params?: { status?: string; workflowKey?: string; cursor?: string; limit?: number }) => {
     const search = new URLSearchParams();
     if (params?.status) search.set('status', params.status);
     if (params?.workflowKey) search.set('workflowKey', params.workflowKey);
+    if (params?.cursor) search.set('cursor', params.cursor);
     search.set('limit', String(params?.limit ?? 20));
     return request<{ runs: RunSummary[]; nextCursor: string | null }>(
       `/api/marketing2/runs?${search.toString()}`
@@ -145,8 +145,11 @@ export const marketing2Api = {
     runId: string,
     body: { expectedVersion: number; input?: unknown; stepModels?: Record<string, unknown>; title?: string }
   ) => request<{ task: RunDetail['task'] }>(`/api/marketing2/runs/${runId}`, jsonInit('PATCH', body)),
-  deleteRun: (runId: string) =>
-    request<{ success: true }>(`/api/marketing2/runs/${runId}`, { method: 'DELETE' }),
+  deleteRun: (runId: string, force = false) =>
+    request<{ success: true }>(
+      `/api/marketing2/runs/${runId}${force ? '?force=true' : ''}`,
+      { method: 'DELETE' }
+    ),
   patchModelSelections: (
     runId: string,
     body: { expectedVersion: number; changes: { scopeKey: string; modelId: string }[] }

@@ -28,6 +28,26 @@ const RUN_STATUS_LABELS: Record<string, string> = {
   cancelled: '已取消',
 };
 
+const DRAFT_STATUS_FILTER = 'draft,awaiting_review,running_step,partial_failed';
+
+async function loadAllDraftRuns(): Promise<RunSummary[]> {
+  const allRuns: RunSummary[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const page = await marketing2Api.runs({
+      workflowKey: 'marketing2-image-detail-full',
+      status: DRAFT_STATUS_FILTER,
+      cursor,
+      limit: 50,
+    });
+    allRuns.push(...page.runs);
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor);
+
+  return allRuns;
+}
+
 export default function Marketing2Page() {
   const [workflows, setWorkflows] = useState<WorkflowCardApi[]>([]);
   const [recentRuns, setRecentRuns] = useState<RunSummary[]>([]);
@@ -35,7 +55,6 @@ export default function Marketing2Page() {
   const [error, setError] = useState<string | null>(null);
 
   const handleDeleteDraft = async (run: RunSummary) => {
-    if (run.status !== 'draft') return;
     if (!window.confirm(`确定删除草稿“${run.title}”吗？删除后不可恢复。`)) return;
 
     try {
@@ -53,11 +72,11 @@ export default function Marketing2Page() {
       try {
         const [workflowList, runs] = await Promise.all([
           marketing2Api.workflows(),
-          marketing2Api.runs({ status: 'draft,awaiting_review,running_step,partial_failed,completed', limit: 5 }),
+          loadAllDraftRuns(),
         ]);
         if (cancelled) return;
         setWorkflows(workflowList);
-        setRecentRuns(runs.runs);
+        setRecentRuns(runs);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : '加载失败');
       } finally {
@@ -93,19 +112,17 @@ export default function Marketing2Page() {
                   <span className="max-w-40 truncate">{run.title}</span>
                   <Badge variant="secondary">{RUN_STATUS_LABELS[run.status] ?? run.status}</Badge>
                 </Link>
-                {run.status === 'draft' && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0"
-                    title="删除草稿"
-                    aria-label={`删除草稿 ${run.title}`}
-                    onClick={() => void handleDeleteDraft(run)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  title="删除草稿"
+                  aria-label={`删除草稿 ${run.title}`}
+                  onClick={() => void handleDeleteDraft(run)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
               </div>
             ))}
           </div>

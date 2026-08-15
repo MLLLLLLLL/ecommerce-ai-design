@@ -6,10 +6,10 @@ services:
     container_name: ecommerce-ai-db
     environment:
       POSTGRES_USER: ecommerce_ai
-      POSTGRES_PASSWORD: dev_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.local}
       POSTGRES_DB: ecommerce_ai_db
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped

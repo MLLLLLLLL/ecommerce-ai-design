@@ -13,12 +13,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Search, Download, Trash2, Eye, FolderOpen, FileText, Layout, Workflow } from 'lucide-react';
+import { Search, Download, Trash2, Eye, FolderOpen, FileText, Layout, Workflow, ListChecks } from 'lucide-react';
 import Image from 'next/image';
 import { toast } from 'sonner';
 import { getAssetUrl } from '@/lib/utils';
 import { ProjectPickerDialog } from '@/components/shared/ProjectPickerDialog';
+import { BatchOperations } from '@/components/assets/BatchOperations';
 import { useWorkflowBridge } from '@/stores/workflowBridge';
+import { Checkbox } from '@/components/ui/checkbox';
 
 interface Asset {
   id: string;
@@ -50,7 +52,9 @@ export default function AssetsPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   // 加入画布/工作流：目标项目选择状态
-  const [picker, setPicker] = useState<{ type: 'canvas' | 'workflow'; asset: Asset } | null>(null);
+  const [picker, setPicker] = useState<{ type: 'canvas' | 'workflow'; assets: Asset[] } | null>(null);
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [pagination, setPagination] = useState<Pagination>({
     page: 1,
     pageSize: 20,
@@ -82,6 +86,7 @@ export default function AssetsPage() {
       if (data.success) {
         setAssets(data.assets);
         setPagination(data.pagination);
+        setSelectedIds([]);
       }
     } catch (error) {
       console.error('Failed to load assets:', error);
@@ -92,7 +97,9 @@ export default function AssetsPage() {
   };
 
   useEffect(() => {
-    loadAssets();
+    // 数据加载需要在客户端 effect 中触发，避免首屏读取浏览器状态。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadAssets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pagination.page, sourceFilter]);
 
@@ -117,26 +124,69 @@ export default function AssetsPage() {
       } else {
         throw new Error(data.error);
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Delete error:', error);
-      toast.error(error.message || '删除失败');
+      toast.error(error instanceof Error ? error.message : '删除失败');
     }
+  };
+
+  const toggleMultiSelect = () => {
+    setMultiSelectMode((enabled) => !enabled);
+    setSelectedIds([]);
+  };
+
+  const toggleAssetSelection = (id: string) => {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    );
+  };
+
+  const togglePageSelection = () => {
+    const pageIds = assets.map((asset) => asset.id);
+    setSelectedIds((current) => {
+      const allSelected = pageIds.every((id) => current.includes(id));
+      return allSelected
+        ? current.filter((id) => !pageIds.includes(id))
+        : Array.from(new Set([...current, ...pageIds]));
+    });
+  };
+
+  const selectedAssets = assets.filter((asset) => selectedIds.includes(asset.id));
+
+  const openBatchProjectPicker = (type: 'canvas' | 'workflow') => {
+    if (selectedAssets.length === 0) {
+      toast.error('请先选择资源');
+      return;
+    }
+    const imageAssets = selectedAssets.filter((asset) =>
+      ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes((asset.format || '').toLowerCase())
+    );
+    if (imageAssets.length === 0) {
+      toast.error('选中的资源中没有可加入项目的图片');
+      return;
+    }
+    if (imageAssets.length < selectedAssets.length) {
+      toast.info(`已跳过 ${selectedAssets.length - imageAssets.length} 个非图片资源`);
+    }
+    setPicker({ type, assets: imageAssets });
   };
 
   // 加入画布/工作流：bridge 队列 + 跳转目标项目，编辑器加载完成后自动落位
   const handlePickProject = (projectId: string) => {
     if (!picker) return;
-    const url = getAssetUrl(picker.asset.filepath);
+    const urls = picker.assets.map((asset) => getAssetUrl(asset.filepath));
     if (picker.type === 'canvas') {
-      useWorkflowBridge.getState().pushToCanvas(url);
-      toast.success('已加入画布，进入项目后自动落位');
+      urls.forEach((url) => useWorkflowBridge.getState().pushToCanvas(url));
+      toast.success(`已加入画布 ${urls.length} 张图片，进入项目后自动落位`);
       router.push(`/canvas/${projectId}`);
     } else {
-      useWorkflowBridge.getState().sendToWorkflow(url);
-      toast.success('已加入工作流，进入项目后自动创建图片输入节点');
+      urls.forEach((url) => useWorkflowBridge.getState().pushToWorkflow(url));
+      toast.success(`已加入工作流 ${urls.length} 张图片，进入项目后自动创建图片输入节点`);
       router.push(`/workflow/${projectId}`);
     }
     setPicker(null);
+    setSelectedIds([]);
+    setMultiSelectMode(false);
   };
 
   const formatFileSize = (bytes: number) => {
@@ -159,8 +209,21 @@ export default function AssetsPage() {
   return (
     <div className="container mx-auto space-y-6 p-6">
       <div>
-        <h1 className="text-3xl font-bold">资源库</h1>
-        <p className="text-muted-foreground">管理你的 AI 生成图片</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold">资源库</h1>
+            <p className="text-muted-foreground">管理你的 AI 生成图片</p>
+          </div>
+          <Button
+            type="button"
+            variant={multiSelectMode ? 'secondary' : 'outline'}
+            onClick={toggleMultiSelect}
+            aria-pressed={multiSelectMode}
+          >
+            <ListChecks className="mr-2 h-4 w-4" />
+            {multiSelectMode ? '退出多选' : '多选'}
+          </Button>
+        </div>
       </div>
 
       {/* 搜索和筛选 */}
@@ -198,7 +261,27 @@ export default function AssetsPage() {
         <span>
           第 {pagination.page} / {pagination.totalPages || 1} 页
         </span>
+        {multiSelectMode && assets.length > 0 && (
+          <label className="ml-auto flex items-center gap-2 text-sm text-foreground">
+            <Checkbox
+              checked={assets.every((asset) => selectedIds.includes(asset.id))}
+              onCheckedChange={togglePageSelection}
+              aria-label="选择当前页资源"
+            />
+            选择当前页
+          </label>
+        )}
       </div>
+
+      {multiSelectMode && selectedIds.length > 0 && (
+        <BatchOperations
+          selectedIds={selectedIds}
+          onClearSelection={() => setSelectedIds([])}
+          onOperationComplete={() => void loadAssets()}
+          onAddToCanvas={() => openBatchProjectPicker('canvas')}
+          onAddToWorkflow={() => openBatchProjectPicker('workflow')}
+        />
+      )}
 
       {/* 资源网格 */}
       {loading ? (
@@ -214,7 +297,24 @@ export default function AssetsPage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {assets.map((asset) => (
             <Card key={asset.id} className="overflow-hidden">
-              <div className="relative aspect-square w-full overflow-hidden bg-muted">
+              <div
+                className={`relative aspect-square w-full overflow-hidden bg-muted ${
+                  multiSelectMode ? 'cursor-pointer' : ''
+                } ${selectedIds.includes(asset.id) ? 'ring-2 ring-inset ring-primary' : ''}`}
+                role={multiSelectMode ? 'button' : undefined}
+                tabIndex={multiSelectMode ? 0 : undefined}
+                aria-pressed={multiSelectMode ? selectedIds.includes(asset.id) : undefined}
+                aria-label={multiSelectMode ? `选择或取消选择 ${asset.filename}` : undefined}
+                onClick={() => {
+                  if (multiSelectMode) toggleAssetSelection(asset.id);
+                }}
+                onKeyDown={(event) => {
+                  if (multiSelectMode && (event.key === 'Enter' || event.key === ' ')) {
+                    event.preventDefault();
+                    toggleAssetSelection(asset.id);
+                  }
+                }}
+              >
                 {['png', 'jpg', 'jpeg', 'webp', 'gif'].includes((asset.format || '').toLowerCase()) ? (
                   <Image
                     src={getAssetUrl(asset.thumbnail || asset.filepath)}
@@ -233,6 +333,17 @@ export default function AssetsPage() {
                     {asset.source}
                   </Badge>
                 </div>
+                {multiSelectMode && (
+                  <div className="absolute left-2 top-2 rounded-md bg-background/90 p-1 shadow-sm">
+                    <Checkbox
+                      checked={selectedIds.includes(asset.id)}
+                      onCheckedChange={() => toggleAssetSelection(asset.id)}
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      aria-label={`选择资源 ${asset.filename}`}
+                    />
+                  </div>
+                )}
               </div>
               <CardContent className="space-y-2 p-3">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -269,7 +380,7 @@ export default function AssetsPage() {
                         variant="outline"
                         size="sm"
                         title="加入画布"
-                        onClick={() => setPicker({ type: 'canvas', asset })}
+                        onClick={() => setPicker({ type: 'canvas', assets: [asset] })}
                       >
                         <Layout className="h-3 w-3" />
                       </Button>
@@ -277,7 +388,7 @@ export default function AssetsPage() {
                         variant="outline"
                         size="sm"
                         title="加入工作流"
-                        onClick={() => setPicker({ type: 'workflow', asset })}
+                        onClick={() => setPicker({ type: 'workflow', assets: [asset] })}
                       >
                         <Workflow className="h-3 w-3" />
                       </Button>

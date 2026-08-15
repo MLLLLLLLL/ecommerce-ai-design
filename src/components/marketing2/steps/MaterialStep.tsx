@@ -1,13 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -21,12 +19,11 @@ import {
   MAIN_IMAGE_COUNT_RANGE,
   TOTAL_IMAGE_ITEM_LIMIT,
 } from '@/lib/marketing2/schemas';
-import { getAssetUrl } from '@/lib/utils';
 
 // ============================================
 // 阶段一：素材与参数（交互 6.1）
 // 图片 1-5 张（上传/资源库/删除/替换），平台、输出数量规则、
-// 产品、定位、约束分组；不同工作流展示各自最小输入。
+// 产品、定位、约束分组。
 // ============================================
 
 const PLATFORMS = [
@@ -166,73 +163,15 @@ function CountField({
 }
 
 export interface MaterialStepProps {
-  workflowKey: string;
   value: Record<string, unknown>;
   onChange: (input: Record<string, unknown>) => void;
   disabled?: boolean;
 }
-
-/** 质检工作流的资产选择器：从资源库勾选已生成图片。 */
-function AssetPicker({
-  selected,
-  onChange,
-}: {
-  selected: string[];
-  onChange: (ids: string[]) => void;
-}) {
-  const [assets, setAssets] = useState<{ id: string; filename: string; filepath: string }[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/api/assets?pageSize=50')
-      .then((response) => response.json())
-      .then((data) => {
-        if (!cancelled && data.success) setAssets(data.assets ?? []);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (assets.length === 0) {
-    return <p className="text-sm text-muted-foreground">资源库暂无图片，请先在其它任务中生成或上传。</p>;
-  }
-
-  return (
-    <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3 md:grid-cols-4">
-      {assets.map((asset) => {
-        const checked = selected.includes(asset.id);
-        return (
-          <label
-            key={asset.id}
-            className={`relative cursor-pointer overflow-hidden rounded-md border ${checked ? 'ring-2 ring-blue-500' : ''}`}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={getAssetUrl(asset.filepath)} alt={asset.filename} className="h-20 w-full object-cover" />
-            <span className="absolute left-1 top-1">
-              <Checkbox
-                checked={checked}
-                onCheckedChange={(next) =>
-                  onChange(next === true ? [...selected, asset.id] : selected.filter((id) => id !== asset.id))
-                }
-              />
-            </span>
-          </label>
-        );
-      })}
-    </div>
-  );
-}
-
-export function MaterialStep({ workflowKey, value, onChange, disabled }: MaterialStepProps) {
+export function MaterialStep({ value, onChange, disabled }: MaterialStepProps) {
   const set = (key: string, fieldValue: unknown) => onChange({ ...value, [key]: fieldValue });
   const images = (value.productImages as string[]) ?? [];
   const sellPoints = (value.sellPoints as string[]) ?? [];
   const forbidden = (value.forbidden as string[]) ?? [];
-  const prompts = (value.prompts as { kind: string; index: number; keyword: string; prompt: string }[]) ?? [];
-  const referenceImages = (value.referenceImages as string[]) ?? [];
-  const assetIds = (value.assetIds as string[]) ?? [];
 
   const total =
     typeof value.mainImageCount === 'number' && typeof value.detailPageCount === 'number'
@@ -243,93 +182,12 @@ export function MaterialStep({ workflowKey, value, onChange, disabled }: Materia
     <div className="space-y-6">
       {/* 图片 */}
       <section className="space-y-2">
-        <h3 className="text-sm font-medium">{workflowKey === 'marketing2-quality-repair' ? '待质检图片' : '产品图'}</h3>
-        {workflowKey === 'marketing2-quality-repair' ? (
-          <AssetPicker selected={assetIds} onChange={(ids) => set('assetIds', ids)} />
-        ) : workflowKey === 'marketing2-batch-generation' ? (
-          <>
-            <Label className="text-xs text-muted-foreground">参考图（至少 1 张）</Label>
-            <ImagePicker images={referenceImages} onChange={(next) => set('referenceImages', next)} disabled={disabled} />
-          </>
-        ) : (
-          <ImagePicker images={images} onChange={(next) => set('productImages', next)} disabled={disabled} />
-        )}
+        <h3 className="text-sm font-medium">产品图</h3>
+        <ImagePicker images={images} onChange={(next) => set('productImages', next)} disabled={disabled} />
       </section>
 
-      {/* 批量生图：提示词列表 */}
-      {workflowKey === 'marketing2-batch-generation' && (
-        <section className="space-y-2">
-          <h3 className="text-sm font-medium">提示词（来自历史策划或手动输入，最多 {TOTAL_IMAGE_ITEM_LIMIT} 条）</h3>
-          {prompts.map((plan, index) => (
-            <div key={index} className="space-y-1 rounded-md border p-2">
-              <div className="flex items-center gap-2 text-xs">
-                <Select
-                  value={plan.kind}
-                  onValueChange={(kind) => {
-                    const next = [...prompts];
-                    next[index] = { ...plan, kind };
-                    set('prompts', next);
-                  }}
-                >
-                  <SelectTrigger className="w-24">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="main_image">主图</SelectItem>
-                    <SelectItem value="detail_page">详情页</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input
-                  className="w-32"
-                  placeholder="关键词"
-                  value={plan.keyword}
-                  onChange={(e) => {
-                    const next = [...prompts];
-                    next[index] = { ...plan, keyword: e.target.value };
-                    set('prompts', next);
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => set('prompts', prompts.filter((_, i) => i !== index))}
-                >
-                  删除
-                </Button>
-              </div>
-              <Textarea
-                rows={2}
-                placeholder="生图提示词"
-                value={plan.prompt}
-                onChange={(e) => {
-                  const next = [...prompts];
-                  next[index] = { ...plan, prompt: e.target.value };
-                  set('prompts', next);
-                }}
-              />
-            </div>
-          ))}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={prompts.length >= TOTAL_IMAGE_ITEM_LIMIT}
-            onClick={() =>
-              set('prompts', [
-                ...prompts,
-                { kind: 'main_image', index: prompts.length + 1, keyword: '', prompt: '' },
-              ])
-            }
-          >
-            添加提示词
-          </Button>
-        </section>
-      )}
-
       {/* 产品信息 */}
-      {workflowKey !== 'marketing2-background-cleanup' && workflowKey !== 'marketing2-quality-repair' && (
-        <section className="space-y-3">
+      <section className="space-y-3">
           <h3 className="text-sm font-medium">产品信息</h3>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
@@ -349,36 +207,30 @@ export function MaterialStep({ workflowKey, value, onChange, disabled }: Materia
               />
             </div>
           </div>
-          {workflowKey === 'marketing2-image-detail-full' && (
-            <div className="space-y-1">
-              <Label className="text-xs">核心卖点（逗号分隔）</Label>
-              <Input
-                value={sellPoints.join('，')}
-                disabled={disabled}
-                onChange={(e) =>
-                  set('sellPoints', e.target.value.split(/[，,]/).map((item) => item.trim()).filter(Boolean))
-                }
-              />
-            </div>
-          )}
-          {workflowKey === 'marketing2-image-detail-full' && (
-            <div className="space-y-1">
-              <Label className="text-xs">禁止出现（逗号分隔）</Label>
-              <Input
-                value={forbidden.join('，')}
-                disabled={disabled}
-                onChange={(e) =>
-                  set('forbidden', e.target.value.split(/[，,]/).map((item) => item.trim()).filter(Boolean))
-                }
-              />
-            </div>
-          )}
+          <div className="space-y-1">
+            <Label className="text-xs">核心卖点（逗号分隔）</Label>
+            <Input
+              value={sellPoints.join('，')}
+              disabled={disabled}
+              onChange={(e) =>
+                set('sellPoints', e.target.value.split(/[，,]/).map((item) => item.trim()).filter(Boolean))
+              }
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">禁止出现（逗号分隔）</Label>
+            <Input
+              value={forbidden.join('，')}
+              disabled={disabled}
+              onChange={(e) =>
+                set('forbidden', e.target.value.split(/[，,]/).map((item) => item.trim()).filter(Boolean))
+              }
+            />
+          </div>
         </section>
-      )}
 
-      {/* 定位与约束（交互 6.1，仅完整链路） */}
-      {workflowKey === 'marketing2-image-detail-full' && (
-        <section className="space-y-3">
+      {/* 定位与约束（交互 6.1） */}
+      <section className="space-y-3">
           <h3 className="text-sm font-medium">定位与约束</h3>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
@@ -427,12 +279,10 @@ export function MaterialStep({ workflowKey, value, onChange, disabled }: Materia
               onChange={(e) => set('extraRequirements', e.target.value)}
             />
           </div>
-        </section>
-      )}
+      </section>
 
       {/* 平台与输出 */}
-      {workflowKey !== 'marketing2-background-cleanup' && workflowKey !== 'marketing2-quality-repair' && (
-        <section className="space-y-3">
+      <section className="space-y-3">
           <h3 className="text-sm font-medium">平台与输出</h3>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
@@ -453,24 +303,20 @@ export function MaterialStep({ workflowKey, value, onChange, disabled }: Materia
                 </SelectContent>
               </Select>
             </div>
-            {workflowKey !== 'marketing2-batch-generation' && (
-              <>
-                <CountField
-                  label={`主图数量（${MAIN_IMAGE_COUNT_RANGE.min}-${MAIN_IMAGE_COUNT_RANGE.max}）`}
-                  value={(value.mainImageCount as number | 'auto') ?? 'auto'}
-                  min={MAIN_IMAGE_COUNT_RANGE.min}
-                  max={MAIN_IMAGE_COUNT_RANGE.max}
-                  onChange={(count) => set('mainImageCount', count)}
-                />
-                <CountField
-                  label={`详情页数量（${DETAIL_PAGE_COUNT_RANGE.min}-${DETAIL_PAGE_COUNT_RANGE.max}）`}
-                  value={(value.detailPageCount as number | 'auto') ?? 'auto'}
-                  min={DETAIL_PAGE_COUNT_RANGE.min}
-                  max={DETAIL_PAGE_COUNT_RANGE.max}
-                  onChange={(count) => set('detailPageCount', count)}
-                />
-              </>
-            )}
+            <CountField
+              label={`主图数量（${MAIN_IMAGE_COUNT_RANGE.min}-${MAIN_IMAGE_COUNT_RANGE.max}）`}
+              value={(value.mainImageCount as number | 'auto') ?? 'auto'}
+              min={MAIN_IMAGE_COUNT_RANGE.min}
+              max={MAIN_IMAGE_COUNT_RANGE.max}
+              onChange={(count) => set('mainImageCount', count)}
+            />
+            <CountField
+              label={`详情页数量（${DETAIL_PAGE_COUNT_RANGE.min}-${DETAIL_PAGE_COUNT_RANGE.max}）`}
+              value={(value.detailPageCount as number | 'auto') ?? 'auto'}
+              min={DETAIL_PAGE_COUNT_RANGE.min}
+              max={DETAIL_PAGE_COUNT_RANGE.max}
+              onChange={(count) => set('detailPageCount', count)}
+            />
           </div>
           {total !== null && total > TOTAL_IMAGE_ITEM_LIMIT && (
             <p className="text-xs text-destructive">
@@ -478,21 +324,6 @@ export function MaterialStep({ workflowKey, value, onChange, disabled }: Materia
             </p>
           )}
         </section>
-      )}
-
-      {/* 底图净化指令 */}
-      {workflowKey === 'marketing2-background-cleanup' && (
-        <section className="space-y-1">
-          <Label className="text-xs">净化指令（可选）</Label>
-          <Textarea
-            rows={2}
-            placeholder="例如：保留产品与包装，去除背景杂物与水印"
-            value={(value.cleanupInstruction as string) ?? ''}
-            disabled={disabled}
-            onChange={(e) => set('cleanupInstruction', e.target.value)}
-          />
-        </section>
-      )}
     </div>
   );
 }

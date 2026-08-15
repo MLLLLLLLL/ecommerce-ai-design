@@ -1,5 +1,6 @@
 import { AIServiceAdapter } from '../base';
 import { TextToImageParams, ImageToImageParams, AIServiceConfig } from '@/types/ai';
+import { safeFetch } from '@/lib/security/safe-fetch';
 
 /**
  * OpenAI DALL-E 适配器
@@ -18,7 +19,7 @@ export class OpenAIAdapter extends AIServiceAdapter {
    */
   async testConnection(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseURL}/models`, {
+      const response = await safeFetch(`${this.baseURL}/models`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${this.config.apiKey}`,
@@ -46,7 +47,7 @@ export class OpenAIAdapter extends AIServiceAdapter {
       // DALL-E 3 每次只能生成1张
       const n = model === 'dall-e-3' ? 1 : Math.min(params.samples, 10);
 
-      const response = await fetch(`${this.baseURL}/images/generations`, {
+      const response = await safeFetch(`${this.baseURL}/images/generations`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.config.apiKey}`,
@@ -106,7 +107,7 @@ export class OpenAIAdapter extends AIServiceAdapter {
       const size = this.normalizeSize(params.width, params.height, 'dall-e-2');
       formData.append('size', size);
 
-      const response = await fetch(`${this.baseURL}/images/variations`, {
+      const response = await safeFetch(`${this.baseURL}/images/variations`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.config.apiKey}`,

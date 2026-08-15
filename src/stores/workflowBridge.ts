@@ -8,6 +8,7 @@ import { persist } from 'zustand/middleware';
  */
 interface WorkflowBridgeState {
   pendingCanvasImages: string[];
+  pendingWorkflowImages: string[];
   canvasToWorkflow: string | null;
 
   // 工作流 → 画布
@@ -16,6 +17,8 @@ interface WorkflowBridgeState {
 
   // 画布 → 工作流
   sendToWorkflow: (dataUrl: string) => void;
+  pushToWorkflow: (imageUrl: string) => void;
+  popWorkflowImages: () => string[];
   consumeCanvasImage: () => string | null;
 }
 
@@ -23,6 +26,7 @@ export const useWorkflowBridge = create<WorkflowBridgeState>()(
   persist(
     (set, get) => ({
       pendingCanvasImages: [],
+      pendingWorkflowImages: [],
       canvasToWorkflow: null,
 
       pushToCanvas: (imageUrl) => {
@@ -32,7 +36,7 @@ export const useWorkflowBridge = create<WorkflowBridgeState>()(
       },
 
       popCanvasImages: () => {
-        const images = get().pendingCanvasImages;
+        const images = [...get().pendingCanvasImages];
         if (images.length > 0) {
           set({ pendingCanvasImages: [] });
         }
@@ -41,6 +45,20 @@ export const useWorkflowBridge = create<WorkflowBridgeState>()(
 
       sendToWorkflow: (dataUrl) => {
         set({ canvasToWorkflow: dataUrl });
+      },
+
+      pushToWorkflow: (imageUrl) => {
+        set((state) => ({
+          pendingWorkflowImages: [...state.pendingWorkflowImages, imageUrl],
+        }));
+      },
+
+      popWorkflowImages: () => {
+        const images = [...get().pendingWorkflowImages];
+        if (images.length > 0) {
+          set({ pendingWorkflowImages: [] });
+        }
+        return images;
       },
 
       consumeCanvasImage: () => {

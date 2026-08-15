@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { FileStorage } from '@/lib/storage/FileStorage';
+import { getCurrentUser } from '@/lib/auth/current-user';
 
 // POST /api/assets/batch - 批量操作资源
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const user = await getCurrentUser();
     const { action, assetIds, data } = body;
 
     if (!action || !assetIds || !Array.isArray(assetIds) || assetIds.length === 0) {
@@ -19,7 +21,7 @@ export async function POST(req: NextRequest) {
 
     switch (action) {
       case 'delete':
-        result = await batchDelete(assetIds);
+        result = await batchDelete(assetIds, user.id);
         break;
 
       case 'move':
@@ -29,7 +31,7 @@ export async function POST(req: NextRequest) {
             { status: 400 }
           );
         }
-        result = await batchMove(assetIds, data.folderId);
+        result = await batchMove(assetIds, data.folderId, user.id);
         break;
 
       case 'addTags':
@@ -39,7 +41,7 @@ export async function POST(req: NextRequest) {
             { status: 400 }
           );
         }
-        result = await batchAddTags(assetIds, data.tagIds);
+        result = await batchAddTags(assetIds, data.tagIds, user.id);
         break;
 
       case 'removeTags':
@@ -49,7 +51,7 @@ export async function POST(req: NextRequest) {
             { status: 400 }
           );
         }
-        result = await batchRemoveTags(assetIds, data.tagIds);
+        result = await batchRemoveTags(assetIds, data.tagIds, user.id);
         break;
 
       default:
@@ -73,14 +75,14 @@ export async function POST(req: NextRequest) {
 }
 
 // 批量删除
-async function batchDelete(assetIds: string[]) {
+async function batchDelete(assetIds: string[], userId: string) {
   const storage = new FileStorage({
     baseDir: process.env.USER_DATA_PATH || './user-data',
   });
 
   // 获取所有资源
   const assets = await prisma.asset.findMany({
-    where: { id: { in: assetIds } },
+    where: { id: { in: assetIds }, userId },
   });
 
   // 删除文件
@@ -99,7 +101,7 @@ async function batchDelete(assetIds: string[]) {
 
   // 删除数据库记录
   const deleted = await prisma.asset.deleteMany({
-    where: { id: { in: assetIds } },
+    where: { id: { in: assetIds }, userId },
   });
 
   return {
@@ -110,9 +112,9 @@ async function batchDelete(assetIds: string[]) {
 }
 
 // 批量移动到文件夹
-async function batchMove(assetIds: string[], folderId: string | null) {
+async function batchMove(assetIds: string[], folderId: string | null, userId: string) {
   const updated = await prisma.asset.updateMany({
-    where: { id: { in: assetIds } },
+    where: { id: { in: assetIds }, userId },
     data: { folderId },
   });
 
@@ -123,13 +125,13 @@ async function batchMove(assetIds: string[], folderId: string | null) {
 }
 
 // 批量添加标签
-async function batchAddTags(assetIds: string[], tagIds: string[]) {
+async function batchAddTags(assetIds: string[], tagIds: string[], userId: string) {
   let updated = 0;
 
   for (const assetId of assetIds) {
     try {
       await prisma.asset.update({
-        where: { id: assetId },
+        where: { id: assetId, userId },
         data: {
           tags: {
             connect: tagIds.map((id) => ({ id })),
@@ -149,13 +151,13 @@ async function batchAddTags(assetIds: string[], tagIds: string[]) {
 }
 
 // 批量移除标签
-async function batchRemoveTags(assetIds: string[], tagIds: string[]) {
+async function batchRemoveTags(assetIds: string[], tagIds: string[], userId: string) {
   let updated = 0;
 
   for (const assetId of assetIds) {
     try {
       await prisma.asset.update({
-        where: { id: assetId },
+        where: { id: assetId, userId },
         data: {
           tags: {
             disconnect: tagIds.map((id) => ({ id })),

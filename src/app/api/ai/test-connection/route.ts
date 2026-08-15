@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAIService } from '@/lib/ai/factory';
 import { decryptApiKey } from '@/lib/security/encryption';
 import { AIServiceConfig } from '@/types/ai';
+import { assertSafeOutboundUrl, safeFetch } from '@/lib/security/safe-url';
 
 /**
  * 解密设置页传来的API Key
@@ -34,7 +35,9 @@ async function testTextModel(body: {
     );
   }
 
-  const response = await fetch(`${baseURL}/chat/completions`, {
+  await assertSafeOutboundUrl(baseURL);
+
+  const response = await safeFetch(`${baseURL}/chat/completions`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -95,6 +98,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error('[API] Test connection error:', error);
+    if (error instanceof Error && /上游地址|内网|HTTPS|内部主机|解析/.test(error.message)) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+    }
     return NextResponse.json(
       { success: false, error: error.message || 'Connection test failed' },
       { status: 500 }

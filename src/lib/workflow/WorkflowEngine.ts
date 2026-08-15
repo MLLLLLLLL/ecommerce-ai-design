@@ -11,7 +11,7 @@ export class WorkflowEngine {
   private nodes: Node<NodeData>[] = [];
   private edges: Edge[] = [];
   private results: Map<string, any> = new Map();
-  private nodeStatus: Map<string, 'idle' | 'running' | 'success' | 'error'> = new Map();
+  private nodeStatus: Map<string, 'idle' | 'running' | 'success' | 'error' | 'skipped'> = new Map();
   private onStatusChange?: (nodeId: string, status: string) => void;
 
   constructor(
@@ -109,13 +109,13 @@ export class WorkflowEngine {
     ) {
       return result[sourceHandle];
     }
-    return result;
+    return sourceHandle ? undefined : result;
   }
 
   // 更新节点状态
   private updateNodeStatus(
     nodeId: string,
-    status: 'idle' | 'running' | 'success' | 'error'
+    status: 'idle' | 'running' | 'success' | 'error' | 'skipped'
   ) {
     this.nodeStatus.set(nodeId, status);
     if (this.onStatusChange) {
@@ -182,6 +182,16 @@ export class WorkflowEngine {
 
       // 按顺序执行节点
       for (const nodeId of executionOrder) {
+        const incoming = this.edges.filter((edge) => edge.target === nodeId);
+        const unreachable = incoming.some((edge) => {
+          const sourceResult = this.results.get(edge.source);
+          return sourceResult !== undefined && edge.sourceHandle != null &&
+            this.extractOutput(sourceResult, edge.sourceHandle) === undefined;
+        });
+        if (unreachable) {
+          this.updateNodeStatus(nodeId, 'skipped');
+          continue;
+        }
         try {
           await this.executeNode(nodeId);
         } catch (error: any) {

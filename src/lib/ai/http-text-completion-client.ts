@@ -6,6 +6,7 @@ import {
   TextCompletionRequest,
   classifyHttpStatus,
 } from '@/lib/ai/text-completion-client';
+import { safeFetch } from '@/lib/security/safe-url';
 
 // ============================================
 // OpenAI 文本接口兼容 HTTP 客户端（V3 5.1）
@@ -226,7 +227,7 @@ export class HttpTextCompletionClient implements TextCompletionClient {
 
       let response: Response;
       try {
-        response = await fetch(url, {
+        response = await safeFetch(url, {
           method: 'POST',
           headers,
           body: JSON.stringify(body),

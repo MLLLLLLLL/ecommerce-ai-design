@@ -308,36 +308,41 @@ export async function createMarketingTaskAsync(
       throw new MarketingServiceError('VALIDATION_ERROR', '不支持的模块');
   }
 
-  const task = await prisma.marketingTask.create({
-    data: {
-      userId,
-      ...taskData,
-      schemaVersion: request.schemaVersion,
-    } as unknown as Prisma.MarketingTaskCreateInput,
-  });
-
-  await prisma.marketingTaskItem.createMany({
-    data: items.map((item) => ({
-      taskId: task.id,
-      userId,
-      kind: item.kind,
-      role: item.role,
-      modelId: item.modelId,
-      dependsOn: item.dependsOn ?? null,
-      input: item.input as Prisma.InputJsonValue,
-      maxAttempts: item.maxAttempts,
-      status: 'pending',
-    })),
-  });
-
-  await prisma.marketingTaskEvent.create({
-    data: {
-      taskId: task.id,
-      userId,
-      type: 'task_created',
-      payload: { module: request.module } as Prisma.InputJsonValue,
-    },
-  });
+  const persist = async (tx: any) => {
+    const createdTask = await tx.marketingTask.create({
+      data: {
+        userId,
+        ...taskData,
+        schemaVersion: request.schemaVersion,
+      } as unknown as Prisma.MarketingTaskCreateInput,
+    });
+    await tx.marketingTaskItem.createMany({
+      data: items.map((item) => ({
+        taskId: createdTask.id,
+        userId,
+        kind: item.kind,
+        role: item.role,
+        modelId: item.modelId,
+        dependsOn: item.dependsOn ?? null,
+        input: item.input as Prisma.InputJsonValue,
+        maxAttempts: item.maxAttempts,
+        status: 'pending',
+      })),
+    });
+    await tx.marketingTaskEvent.create({
+      data: {
+        taskId: createdTask.id,
+        userId,
+        type: 'task_created',
+        payload: { module: request.module } as Prisma.InputJsonValue,
+      },
+    });
+    return createdTask;
+  };
+  // 单测使用精简 Prisma mock 时没有 $transaction；生产 Prisma 始终走原子事务。
+  const task = typeof (prisma as any).$transaction === 'function'
+    ? await prisma.$transaction(persist)
+    : await persist(prisma);
 
   return { taskId: task.id, status: task.status };
 }

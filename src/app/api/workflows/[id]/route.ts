@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
+import { getCurrentUser } from '@/lib/auth/current-user';
 
 // GET /api/workflows/[id] - 工作流详情（含 definition，进入编辑器时调用）
 export async function GET(
@@ -8,8 +9,9 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const workflow = await prisma.workflowTemplate.findUnique({
-      where: { id },
+    const user = await getCurrentUser();
+    const workflow = await prisma.workflowTemplate.findFirst({
+      where: { id, userId: user.id },
     });
 
     if (!workflow) {
@@ -39,6 +41,7 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+    const user = await getCurrentUser();
     const body = await req.json();
     const { name, description, definition } = body;
 
@@ -47,21 +50,15 @@ export async function PATCH(
     if (description !== undefined) updateData.description = description;
     if (definition !== undefined) updateData.definition = definition;
 
-    const workflow = await prisma.workflowTemplate.update({
-      where: { id },
+    const updated = await prisma.workflowTemplate.updateMany({
+      where: { id, userId: user.id },
       data: updateData,
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        createdAt: true,
-        updatedAt: true,
-      },
     });
+    if (!updated.count) return NextResponse.json({ success: false, error: 'Workflow not found' }, { status: 404 });
 
     return NextResponse.json({
       success: true,
-      workflow,
+      workflow: await prisma.workflowTemplate.findFirst({ where: { id, userId: user.id }, select: { id: true, name: true, description: true, createdAt: true, updatedAt: true } }),
     });
   } catch (error: any) {
     console.error('[API] Update workflow error:', error);
@@ -79,9 +76,9 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    await prisma.workflowTemplate.delete({
-      where: { id },
-    });
+    const user = await getCurrentUser();
+    const deleted = await prisma.workflowTemplate.deleteMany({ where: { id, userId: user.id } });
+    if (!deleted.count) return NextResponse.json({ success: false, error: 'Workflow not found' }, { status: 404 });
 
     return NextResponse.json({
       success: true,

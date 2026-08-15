@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { prisma } from '@/lib/db/prisma';
+import { getCurrentUser } from '@/lib/auth/current-user';
 
 const MIME_TYPES: Record<string, string> = {
   png: 'image/png',
@@ -38,13 +40,26 @@ export async function GET(
       );
     }
 
+    const realBase = await fs.realpath(baseDir);
+    const realRequested = await fs.realpath(requested);
+    if (!realRequested.startsWith(realBase + path.sep)) {
+      return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
+    }
+    const user = await getCurrentUser();
+    const relativePath = path.relative(process.cwd(), realRequested).replace(/\\/g, '/');
+    const asset = await prisma.asset.findFirst({
+      where: { userId: user.id, filepath: { in: [relativePath, realRequested] } },
+      select: { id: true },
+    });
+    if (!asset) return NextResponse.json({ success: false, error: 'File not found' }, { status: 404 });
+
     const data = await fs.readFile(requested);
     const ext = path.extname(requested).slice(1).toLowerCase();
 
     return new NextResponse(new Uint8Array(data), {
       headers: {
         'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Cache-Control': 'private, no-store',
       },
     });
   } catch {
