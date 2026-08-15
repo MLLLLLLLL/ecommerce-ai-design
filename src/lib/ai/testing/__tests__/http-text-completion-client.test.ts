@@ -13,7 +13,18 @@ function chatResponse(content: unknown) {
   return jsonResponse({ choices: [{ message: { content } }] });
 }
 
-function baseClient(overrides: Partial<{ timeoutMs: number; maxRetries: number }> = {}) {
+function responsesResponse(content: string) {
+  return jsonResponse({
+    output: [
+      {
+        type: 'message',
+        content: [{ type: 'output_text', text: content }],
+      },
+    ],
+  });
+}
+
+function baseClient(overrides: Partial<{ timeoutMs: number; maxRetries: number; apiProtocol: 'chat_completions' | 'responses' }> = {}) {
   return new HttpTextCompletionClient({
     baseURL: 'https://example.com/v1',
     apiKey: 'test-key',
@@ -57,6 +68,50 @@ describe('HttpTextCompletionClient', () => {
     );
     const content = await baseClient().complete({ messages: [{ role: 'user', content: 'hi' }] });
     expect(content).toBe('part1part2');
+  });
+
+  it('Responses 协议使用 /responses 并解析 output_text', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(responsesResponse('responses result'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const content = await baseClient({ apiProtocol: 'responses' }).complete({
+      messages: [
+        { role: 'system', content: '你是助手' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '识别图片' },
+            { type: 'image_url', image_url: { url: 'https://example.com/image.png' } },
+          ],
+        },
+      ],
+      responseFormat: 'json_object',
+    });
+
+    expect(content).toBe('responses result');
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://example.com/v1/responses');
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      model: 'test-model',
+      input: [
+        { role: 'system', content: '你是助手' },
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: '识别图片' },
+            { type: 'input_image', image_url: 'https://example.com/image.png' },
+          ],
+        },
+      ],
+      text: { format: { type: 'json_object' } },
+    });
+  });
+
+  it('Responses 协议缺少输出文本时报 empty_response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ output: [] })));
+    await expect(
+      baseClient({ apiProtocol: 'responses' }).complete({ messages: [{ role: 'user', content: 'hi' }] })
+    ).rejects.toMatchObject({ kind: 'empty_response' });
   });
 
   it('对象内容被序列化为 JSON 字符串', async () => {

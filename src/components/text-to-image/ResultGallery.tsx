@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Image from 'next/image';
 import { Download, Eye, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -10,6 +11,13 @@ import {
   CardHeader,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { getAssetUrl } from '@/lib/utils';
 
 interface Asset {
@@ -27,14 +35,14 @@ interface Asset {
 interface ResultGalleryProps {
   results: Asset[];
   onDelete?: (id: string) => void;
-  onView?: (asset: Asset) => void;
 }
 
 export function ResultGallery({
   results,
   onDelete,
-  onView,
 }: ResultGalleryProps) {
+  const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
+
   if (results.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center rounded-lg border border-dashed p-12 text-center">
@@ -85,7 +93,7 @@ export function ResultGallery({
                 variant="outline"
                 size="sm"
                 className="flex-1"
-                onClick={() => onView?.(asset)}
+                onClick={() => setPreviewAsset(asset)}
               >
                 <Eye className="mr-1 h-4 w-4" />
                 查看
@@ -115,6 +123,32 @@ export function ResultGallery({
           </Card>
         ))}
       </div>
+
+      <Dialog
+        open={previewAsset !== null}
+        onOpenChange={(open) => {
+          if (!open) setPreviewAsset(null);
+        }}
+      >
+        <DialogContent className="max-h-[96vh] max-w-[min(96vw,1200px)] overflow-auto p-3 sm:rounded-lg">
+          <DialogHeader className="pr-8">
+            <DialogTitle className="truncate text-base">
+              {previewAsset?.filename}
+            </DialogTitle>
+            <DialogDescription className="sr-only">
+              生成图片原图预览
+            </DialogDescription>
+          </DialogHeader>
+          {previewAsset && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={getAssetUrl(previewAsset.filepath)}
+              alt={previewAsset.filename}
+              className="mx-auto max-h-[82vh] max-w-full object-contain"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

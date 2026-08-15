@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Upload, X, Image as ImageIcon } from 'lucide-react';
+import { Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 
@@ -15,45 +15,7 @@ export function ImageUploader({ value, onChange, disabled }: ImageUploaderProps)
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
 
-  const handleDrag = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setDragActive(false);
-    }
-  }, []);
-
-  const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragActive(false);
-
-      if (disabled) return;
-
-      const files = e.dataTransfer.files;
-      if (files && files[0]) {
-        await handleFile(files[0]);
-      }
-    },
-    [disabled]
-  );
-
-  const handleFileInput = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (disabled) return;
-
-      const files = e.target.files;
-      if (files && files[0]) {
-        await handleFile(files[0]);
-      }
-    },
-    [disabled]
-  );
-
-  const handleFile = async (file: File) => {
+  const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith('image/')) {
       alert('请上传图片文件');
       return;
@@ -79,7 +41,45 @@ export function ImageUploader({ value, onChange, disabled }: ImageUploaderProps)
       alert('上传失败');
       setUploading(false);
     }
-  };
+  }, [onChange]);
+
+  const handleDrag = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setDragActive(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragActive(false);
+
+      if (disabled) return;
+
+      const files = e.dataTransfer.files;
+      if (files && files[0]) {
+        await handleFile(files[0]);
+      }
+    },
+    [disabled, handleFile]
+  );
+
+  const handleFileInput = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (disabled) return;
+
+      const files = e.target.files;
+      if (files && files[0]) {
+        await handleFile(files[0]);
+      }
+    },
+    [disabled, handleFile]
+  );
 
   const handleRemove = () => {
     onChange('');
@@ -125,12 +125,13 @@ export function ImageUploader({ value, onChange, disabled }: ImageUploaderProps)
         </div>
       ) : (
         <div className="relative">
-          <div className="relative aspect-square w-full overflow-hidden rounded-lg border bg-muted">
+          <div className="relative h-56 w-full overflow-hidden rounded-lg border bg-muted">
             <Image
               src={value}
-              alt="Uploaded image"
+              alt="已上传原图"
               fill
               className="object-contain"
+              sizes="(max-width: 1024px) 100vw, 66vw"
             />
           </div>
           {!disabled && (

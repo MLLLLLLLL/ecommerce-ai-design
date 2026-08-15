@@ -9,6 +9,7 @@ export interface AIServiceConfig {
   apiKey: string;
   baseURL?: string;
   model?: string;
+  apiProtocol?: 'chat_completions' | 'responses';
   relayType?: 'openai' | 'sd';
   maxConcurrent?: number;
 }

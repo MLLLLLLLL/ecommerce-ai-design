@@ -1,13 +1,19 @@
 'use client';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { useAIService } from '@/hooks/useAIService';
 import { Clock, Zap, CheckCircle } from 'lucide-react';
+import type { AIServiceConfig } from '@/types/ai';
 
-export function GenerationStatus() {
-  const { config, isReady } = useAIService();
+interface GenerationStatusProps {
+  config?: AIServiceConfig | null;
+}
+
+export function GenerationStatus({ config: selectedConfig }: GenerationStatusProps) {
+  const { config: activeConfig, isReady: activeIsReady } = useAIService();
+  const config = selectedConfig ?? activeConfig;
+  const isReady = selectedConfig ? true : activeIsReady;
 
   return (
     <Card>

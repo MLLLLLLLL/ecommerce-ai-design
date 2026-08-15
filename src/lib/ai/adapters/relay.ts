@@ -51,7 +51,7 @@ export class RelayAdapter extends AIServiceAdapter {
    * 是否为 ToAPI 中转站（图片接口为异步任务模式，且要求比例/分辨率参数）
    */
   private isToAPI(): boolean {
-    return /toapis\.com/i.test(this.baseURL);
+    return /toapis\.com/i.test(this.baseURL) || this.config.model?.toLowerCase() === 'gpt-image-2';
   }
 
   /**
@@ -186,7 +186,7 @@ export class RelayAdapter extends AIServiceAdapter {
       }
     } catch (error) {
       console.error('[Relay] Connection test failed:', error);
-      return false;
+      throw error;
     }
   }
 
@@ -194,15 +194,23 @@ export class RelayAdapter extends AIServiceAdapter {
    * 测试OpenAI格式中转站
    */
   private async testOpenAIRelay(): Promise<boolean> {
-    const response = await fetch(`${this.baseURL}/models`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${this.config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
+    let lastError = '';
+    for (const endpoint of this.endpoints('/models')) {
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    return response.ok;
+      if (response.ok) return true;
+      lastError = await this.readApiError(response);
+      // 中转站常见两种 Base URL：根地址或带 /v1；路由不存在时继续尝试另一个。
+      if (response.status !== 404 && response.status !== 405) break;
+    }
+
+    throw new Error(`中转站连接失败：${lastError || '模型列表接口不可用，请检查 Base URL'}`);
   }
 
   /**

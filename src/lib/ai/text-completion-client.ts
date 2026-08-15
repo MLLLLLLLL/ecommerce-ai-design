@@ -1,7 +1,7 @@
 // ============================================
 // 统一文本补全客户端（V3 5.1）
 // Phase 0：冻结接口与错误分类；Phase 1：实现真实 HTTP 客户端。
-// 第一阶段仅支持 OpenAI Chat Completions 兼容协议。
+// 支持 OpenAI Chat Completions 与 Responses 兼容协议。
 // ============================================
 
 export type TextCompletionMessagePart =
@@ -59,6 +59,8 @@ export interface TextCompletionClientConfig {
   baseURL: string;
   apiKey: string;
   model: string;
+  /** 上游文本接口协议，默认 OpenAI Chat Completions。 */
+  apiProtocol?: 'chat_completions' | 'responses';
   /** 单次请求超时（毫秒），默认 120000。 */
   timeoutMs?: number;
   /** 可重试错误最大重试次数（超时/429/5xx），默认 2。 */

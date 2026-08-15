@@ -37,18 +37,26 @@ describe('模型能力实测（V3 5.2）', () => {
     expect(result.passed).toBe(false);
   });
 
-  it('vision：识别到红色通过', async () => {
+  it('vision：五色回答及常见色系名称均通过', async () => {
     const client = new MockTextCompletionClient();
-    client.setScenario({ kind: 'success', content: 'The background color is red.' });
+    client.setScenario({ kind: 'success', content: 'crimson, azure, emerald, gold, violet' });
     const result = await testVision(client);
     expect(result.passed).toBe(true);
   });
 
-  it('vision：未识别到红色不通过', async () => {
+  it('vision：五色齐全但顺序不同也通过', async () => {
     const client = new MockTextCompletionClient();
-    client.setScenario({ kind: 'success', content: 'The background color is blue.' });
+    client.setScenario({ kind: 'success', content: 'red, green, yellow, blue, purple' });
+    const result = await testVision(client);
+    expect(result.passed).toBe(true);
+  });
+
+  it('vision：缺少颜色不通过', async () => {
+    const client = new MockTextCompletionClient();
+    client.setScenario({ kind: 'success', content: 'red, blue, green, yellow' });
     const result = await testVision(client);
     expect(result.passed).toBe(false);
+    expect(result.message).toContain('五色识别不完整');
   });
 
   it('runModelTests：全部通过 -> passed', async () => {
@@ -56,7 +64,7 @@ describe('模型能力实测（V3 5.2）', () => {
     client.setScenarioQueue([
       { kind: 'success', content: 'pong' },
       { kind: 'success', content: '{"test":"ok","value":1}' },
-      { kind: 'success', content: 'red' },
+      { kind: 'success', content: 'red, blue, green, yellow, purple' },
     ]);
     const { report, status } = await runModelTests(client);
     expect(report.connection.passed).toBe(true);

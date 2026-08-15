@@ -10,6 +10,8 @@ const capabilitiesSchema = z.object({
   jsonMode: z.boolean(),
   ocr: z.boolean(),
   imageGeneration: z.boolean(),
+  imageEditing: z.boolean().default(false),
+  referenceImage: z.boolean().default(false),
 });
 
 const createModelSchema = z.object({
@@ -18,6 +20,7 @@ const createModelSchema = z.object({
   baseURL: z.url().max(500),
   apiKey: z.string().trim().min(1).max(2000),
   model: z.string().trim().min(1).max(160),
+  apiProtocol: z.enum(['chat_completions', 'responses']).default('chat_completions'),
   capabilities: capabilitiesSchema,
   isActive: z.boolean().default(true),
   isDefault: z.boolean().default(false),
@@ -60,6 +63,7 @@ export async function POST(request: NextRequest) {
           provider: body.provider,
           baseURL,
           model: body.model,
+          apiProtocol: body.apiProtocol,
           apiKeyEncrypted: encryptServerSecret(body.apiKey),
           capabilities: body.capabilities,
           isActive: body.isActive,

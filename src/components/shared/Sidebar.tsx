@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Settings,
   Sparkles,
+  Sparkle,
   X,
 } from 'lucide-react';
 
@@ -20,6 +21,7 @@ const navigation = [
   { name: '无限画布', href: '/canvas', icon: Layout },
   { name: '工作流', href: '/workflow', icon: Workflow },
   { name: '营销助手', href: '/marketing', icon: Sparkles },
+  { name: '营销助手2', href: '/marketing2', icon: Sparkle },
   { name: '资源库', href: '/assets', icon: FolderOpen },
   { name: '设置', href: '/settings', icon: Settings },
 ];
@@ -65,7 +67,9 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
 
         <nav className="flex-1 space-y-1 px-4">
           {navigation.map((item) => {
-            const isActive = pathname?.startsWith(item.href);
+            // 精确命中或子路径命中（避免 /marketing2 同时点亮 /marketing）
+            const isActive =
+              pathname === item.href || pathname?.startsWith(item.href + '/');
             return (
               <Link
                 key={item.name}

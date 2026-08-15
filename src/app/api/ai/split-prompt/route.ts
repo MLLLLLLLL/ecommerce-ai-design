@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { resolveTextModelForPurpose } from '@/lib/model-configs';
+import { HttpTextCompletionClient } from '@/lib/ai/http-text-completion-client';
 
 // POST /api/ai/split-prompt - 调用文本模型（JSON 模式）把总提示词拆成 N 条子提示词
 // （借鉴 st-image 多图规划的 canvas-multi-image-split）
@@ -26,50 +27,21 @@ export async function POST(req: NextRequest) {
     const { modelId, prompt, count } = requestSchema.parse(await req.json());
     const user = await getCurrentUser();
     const { runtimeConfig } = await resolveTextModelForPurpose(user.id, modelId, 'content');
-    const baseURL = runtimeConfig.baseURL!.replace(/\/+$/, '');
-
-    const upstream = await fetch(`${baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${runtimeConfig.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: runtimeConfig.model,
-        stream: false,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: `总提示词：\n${prompt.trim()}\n\n需要拆分的数量：${count}` },
-        ],
-      }),
+    const client = new HttpTextCompletionClient({
+      baseURL: runtimeConfig.baseURL ?? 'https://api.openai.com/v1',
+      apiKey: runtimeConfig.apiKey,
+      model: runtimeConfig.model ?? 'gpt-4o',
+      apiProtocol: runtimeConfig.apiProtocol,
     });
-
-    if (!upstream.ok) {
-      let detail = '';
-      try {
-        const data = await upstream.json();
-        detail = data.error?.message || JSON.stringify(data);
-      } catch {
-        // 非 JSON 响应
-      }
-      return Response.json(
-        {
-          success: false,
-          error: `文本模型请求失败 (${upstream.status})${detail ? `: ${detail}` : ''}`,
-        },
-        { status: 502 }
-      );
-    }
-
-    const data = await upstream.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) {
-      return Response.json(
-        { success: false, error: '模型响应为空' },
-        { status: 502 }
-      );
-    }
+    const content = await client.complete({
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: `总提示词：\n${prompt.trim()}\n\n需要拆分的数量：${count}` },
+      ],
+      responseFormat: 'json_object',
+      temperature: 0.2,
+      maxTokens: 4000,
+    });
 
     // 解析 JSON；失败时回退：按行/编号提取文本
     let prompts: string[] = [];

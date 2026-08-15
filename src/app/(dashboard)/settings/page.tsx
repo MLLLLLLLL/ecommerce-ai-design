@@ -29,8 +29,20 @@ import {
 import { Download, Plus, Trash2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIServiceConfig } from '@/types/ai';
-import { DEFAULT_MODEL_CAPABILITIES, inferModelCapabilities, ModelCapabilities, ModelConfigSummary } from '@/types/model-config';
+import {
+  DEFAULT_MODEL_CAPABILITIES,
+  inferModelCapabilities,
+  ModelCapabilities,
+  ModelConfigSummary,
+  TextModelApiProtocol,
+} from '@/types/model-config';
 import { generateId } from '@/lib/utils';
+
+const IMAGE_PROVIDER_BASE_URLS = {
+  openai: 'https://api.openai.com/v1',
+  alibaba: 'https://dashscope.aliyuncs.com/api/v1',
+  relay: '',
+} as const;
 
 export default function SettingsPage() {
   const { services, addService, updateService, deleteService } =
@@ -40,6 +52,7 @@ export default function SettingsPage() {
     null
   );
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [imageSaving, setImageSaving] = useState(false);
 
   const [textModels, setTextModels] = useState<ModelConfigSummary[]>([]);
   const [textModelsLoading, setTextModelsLoading] = useState(true);
@@ -50,11 +63,14 @@ export default function SettingsPage() {
     baseURL: '',
     apiKey: '',
     model: '',
+    apiProtocol: 'chat_completions' as TextModelApiProtocol,
     capabilities: DEFAULT_MODEL_CAPABILITIES as ModelCapabilities,
     isActive: true,
     isDefault: false,
   });
   const [textTesting, setTextTesting] = useState(false);
+  const [migrateDialogOpen, setMigrateDialogOpen] = useState(false);
+  const [migrating, setMigrating] = useState(false);
 
   const loadTextModels = async () => {
     setTextModelsLoading(true);
@@ -111,27 +127,36 @@ export default function SettingsPage() {
       return;
     }
 
+    // 按声明能力选择实测项：能力未知或未实测按不可用处理（V2 5.3）
+    const model = textModels.find((item) => item.id === modelId);
+    const capabilities = model?.capabilities;
+    const kinds: string[] = ['connection'];
+    if (capabilities?.jsonMode) kinds.push('jsonMode');
+    if (capabilities?.vision) kinds.push('vision');
+    if (capabilities?.imageGeneration) kinds.push('imageGeneration');
+    if (capabilities?.imageEditing) kinds.push('imageEditing');
+    if (capabilities?.referenceImage) kinds.push('referenceImage');
+
     setTextTesting(true);
     try {
       const response = await fetch(`/api/model-configs/${modelId}/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ kinds }),
       });
 
       const data = await response.json();
 
       if (data.success) {
         const report = data.data?.report ?? {};
-        const passedCount = ['connection', 'jsonMode', 'vision'].filter(
-          (kind) => report[kind]?.passed
-        ).length;
-        if (passedCount === 3) {
-          toast.success('实测通过：连接、JSON 输出、视觉输入均可用');
+        const evaluated = Object.keys(report);
+        const passedCount = evaluated.filter((kind) => report[kind]?.passed).length;
+        if (passedCount === evaluated.length) {
+          toast.success(`实测通过（${passedCount}/${evaluated.length}）`);
         } else if (passedCount === 0) {
           toast.error('实测未通过，请检查模型与 API Key');
         } else {
-          toast.warning(`部分通过（${passedCount}/3）：请查看卡片上的测试摘要`);
+          toast.warning(`部分通过（${passedCount}/${evaluated.length}）：请查看卡片上的测试摘要`);
         }
         await loadTextModels();
       } else {
@@ -145,6 +170,87 @@ export default function SettingsPage() {
     }
   };
 
+  /** 旧图片服务配置迁移（V2 5.2）：预览后显式确认，密钥只在服务端加密保存。 */
+  const handleMigrateImageServices = async () => {
+    if (services.length === 0) {
+      toast.error('没有可迁移的图片模型配置');
+      return;
+    }
+    setMigrating(true);
+    try {
+      const payload: { name: string; provider: 'openai' | 'alibaba' | 'relay'; baseURL?: string; model?: string; apiKey: string }[] = [];
+      for (const service of services) {
+        const resolved = useConfigStore.getState().getServiceById(service.id);
+        if (!resolved?.apiKey) continue;
+        payload.push({
+          name: resolved.name,
+          provider: resolved.provider,
+          baseURL: resolved.baseURL,
+          model: resolved.model,
+          apiKey: resolved.apiKey,
+        });
+      }
+      if (payload.length === 0) {
+        toast.error('没有可迁移的有效配置');
+        return;
+      }
+      const response = await fetch('/api/model-configs/migration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ services: payload }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || '迁移失败');
+      const created = data.data?.created?.length ?? 0;
+      const skipped = data.data?.skipped?.length ?? 0;
+      toast.success(`已迁移 ${created} 个模型${skipped > 0 ? `，跳过 ${skipped} 个同名配置` : ''}。请实测后再用于营销助手2`);
+      setMigrateDialogOpen(false);
+      await loadTextModels();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '迁移失败，旧配置未被修改');
+    } finally {
+      setMigrating(false);
+    }
+  };
+
+  /**
+   * 图片模型在保留本地工作台配置的同时，同步写入服务端模型库。
+   * 营销助手2仅从服务端读取模型，避免新增模型只在当前浏览器可见。
+   */
+  const syncImageModelToServer = async (config: AIServiceConfig, previousName?: string) => {
+    if (!config.baseURL?.trim()) {
+      throw new Error('图片模型需要填写接口地址，才能同步到营销助手模型库');
+    }
+    const existing = textModels.find(
+      (model) => model.name === previousName || model.name === config.name
+    );
+    const capabilities = inferModelCapabilities(config.model ?? config.name);
+    capabilities.imageGeneration = true;
+
+    const response = await fetch(
+      existing ? `/api/model-configs/${existing.id}` : '/api/model-configs',
+      {
+        method: existing ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: config.name,
+          provider: config.provider,
+          baseURL: config.baseURL.trim(),
+          apiKey: config.apiKey,
+          model: config.model || config.name,
+          apiProtocol: 'chat_completions',
+          capabilities,
+          isActive: true,
+          isDefault: existing?.isDefault ?? false,
+        }),
+      }
+    );
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || '同步图片模型到服务端失败');
+    }
+  };
+
   const handleOpenTextDialog = (id?: string) => {
     const model = id ? textModels.find((item) => item.id === id) : null;
     setEditingTextModel(id || null);
@@ -153,7 +259,8 @@ export default function SettingsPage() {
       baseURL: model?.baseURL || '',
       apiKey: '',
       model: model?.model || '',
-      capabilities: model?.capabilities || DEFAULT_MODEL_CAPABILITIES,
+      apiProtocol: model?.apiProtocol ?? 'chat_completions',
+      capabilities: { ...DEFAULT_MODEL_CAPABILITIES, ...(model?.capabilities || {}) },
       isActive: model?.isActive ?? true,
       isDefault: model?.isDefault ?? false,
     });
@@ -234,12 +341,13 @@ export default function SettingsPage() {
 
   const handleOpenDialog = (service?: AIServiceConfig) => {
     if (service) {
+      const resolved = useConfigStore.getState().getServiceById(service.id);
       setEditingService(service);
       setFormData({
         provider: service.provider,
         name: service.name,
-        apiKey: service.apiKey,
-        baseURL: service.baseURL || '',
+        apiKey: resolved?.apiKey ?? '',
+        baseURL: service.baseURL || IMAGE_PROVIDER_BASE_URLS[service.provider],
         model: service.model || '',
         relayType: service.relayType || 'openai',
         maxConcurrent: service.maxConcurrent || 50,
@@ -250,7 +358,7 @@ export default function SettingsPage() {
         provider: 'openai',
         name: '',
         apiKey: '',
-        baseURL: '',
+        baseURL: IMAGE_PROVIDER_BASE_URLS.openai,
         model: '',
         relayType: 'openai',
         maxConcurrent: 50,
@@ -259,9 +367,9 @@ export default function SettingsPage() {
     setDialogOpen(true);
   };
 
-  const handleSave = () => {
-    if (!formData.name.trim() || !formData.apiKey.trim()) {
-      toast.error('请填写服务名称和 API Key');
+  const handleSave = async () => {
+    if (!formData.name.trim() || !formData.apiKey.trim() || !formData.baseURL.trim()) {
+      toast.error('请填写服务名称、接口地址和 API Key');
       return;
     }
 
@@ -276,15 +384,22 @@ export default function SettingsPage() {
       maxConcurrent: formData.maxConcurrent,
     };
 
-    if (editingService) {
-      updateService(editingService.id, config);
-      toast.success('服务已更新');
-    } else {
-      addService(config);
-      toast.success('服务已添加');
+    setImageSaving(true);
+    try {
+      await syncImageModelToServer(config, editingService?.name);
+      if (editingService) {
+        updateService(editingService.id, config);
+      } else {
+        addService(config);
+      }
+      await loadTextModels();
+      setDialogOpen(false);
+      toast.success(editingService ? '图片模型已更新并同步到营销助手' : '图片模型已添加并同步到营销助手');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存图片模型失败');
+    } finally {
+      setImageSaving(false);
     }
-
-    setDialogOpen(false);
   };
 
   const handleTestConnection = async (service: AIServiceConfig) => {
@@ -311,10 +426,24 @@ export default function SettingsPage() {
     }
   };
 
-  const handleDelete = (id: string) => {
-      if (confirm('确定要删除这个图片模型吗？')) {
+  const handleDelete = async (id: string) => {
+    const localService = services.find((service) => service.id === id);
+    if (!localService || !confirm('确定要删除这个图片模型吗？')) return;
+    setImageSaving(true);
+    try {
+      const serverModel = textModels.find((model) => model.name === localService.name);
+      if (serverModel) {
+        const response = await fetch(`/api/model-configs/${serverModel.id}`, { method: 'DELETE' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || '删除服务端图片模型失败');
+      }
       deleteService(id);
-      toast.success('图片模型已删除');
+      await loadTextModels();
+      toast.success('图片模型已删除，并已从营销助手模型库移除');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除图片模型失败');
+    } finally {
+      setImageSaving(false);
     }
   };
 
@@ -351,12 +480,18 @@ export default function SettingsPage() {
         <TabsContent value="services" className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              配置用于文生图、图生图和工作流的图片模型
+              配置用于文生图、图生图和工作流的图片模型。保存后会自动同步到营销助手模型库。
             </p>
-            <Button onClick={() => handleOpenDialog()}>
-              <Plus className="mr-2 h-4 w-4" />
-              添加图片模型
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setMigrateDialogOpen(true)} disabled={services.length === 0}>
+                <Download className="mr-2 h-4 w-4" />
+                同步已有模型
+              </Button>
+              <Button onClick={() => handleOpenDialog()} disabled={imageSaving}>
+                <Plus className="mr-2 h-4 w-4" />
+                添加图片模型
+              </Button>
+            </div>
           </div>
 
           {services.length === 0 ? (
@@ -391,7 +526,7 @@ export default function SettingsPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => handleDelete(service.id)}
+                        onClick={() => void handleDelete(service.id)}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -439,6 +574,7 @@ export default function SettingsPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => handleOpenDialog(service)}
+                        disabled={imageSaving}
                       >
                         编辑
                       </Button>
@@ -458,7 +594,7 @@ export default function SettingsPage() {
             <CardHeader><div className="flex items-center justify-between gap-3"><CardTitle>文本模型</CardTitle><div className="flex gap-2"><Button variant="outline" size="sm" onClick={handleImportLegacyTextModels} disabled={textTesting}><Download className="mr-2 h-4 w-4" />导入旧配置</Button><Button size="sm" onClick={() => handleOpenTextDialog()}><Plus className="mr-2 h-4 w-4" />添加文本模型</Button></div></div></CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">可保存多个 OpenAI 兼容文本模型，并在营销助手中按视觉识别、内容生成角色分别选择。</p>
-              {textModelsLoading ? <p className="py-8 text-center text-sm text-muted-foreground">正在加载文本模型...</p> : textModels.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">暂无配置的文本模型</p> : <div className="grid gap-4 md:grid-cols-2">{textModels.map((textModel) => <Card key={textModel.id}><CardHeader><div className="flex items-start justify-between"><div><CardTitle className="text-lg">{textModel.name}</CardTitle><div className="mt-2 flex flex-wrap gap-2">{textModel.isDefault && <Badge>默认</Badge>}<Badge variant="outline">{textModel.model}</Badge>{textModel.capabilities.vision && <Badge variant="secondary">视觉</Badge>}{textModel.capabilities.jsonMode && <Badge variant="secondary">JSON</Badge>}{!textModel.isActive && <Badge variant="destructive">已停用</Badge>}</div></div><Button variant="ghost" size="icon" aria-label={`删除 ${textModel.name}`} onClick={() => handleDeleteTextModel(textModel.id)}><Trash2 className="h-4 w-4" /></Button></div></CardHeader><CardContent className="space-y-3"><p className="truncate text-sm text-muted-foreground">{textModel.baseURL}</p>{textModel.testStatus && <div className="space-y-1"><div className="flex flex-wrap items-center gap-2">{textModel.testStatus === 'passed' && <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">实测通过</Badge>}{textModel.testStatus === 'partial' && <Badge variant="secondary" className="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">实测部分通过</Badge>}{textModel.testStatus === 'failed' && <Badge variant="destructive">实测未通过</Badge>}{textModel.lastTestedAt && <span className="text-xs text-muted-foreground">{new Date(textModel.lastTestedAt).toLocaleString()}</span>}</div>{textModel.testError && <p className="break-all text-xs text-destructive">{textModel.testError}</p>}</div>}<div className="flex gap-2"><Button variant="outline" size="sm" className="flex-1" onClick={() => handleTestTextModel(textModel.id)} disabled={textTesting}>{textTesting ? <><Loader2 className="mr-2 h-3 w-3 animate-spin" />测试中...</> : '实测能力'}</Button><Button variant="outline" size="sm" onClick={() => handleOpenTextDialog(textModel.id)}>编辑</Button></div></CardContent></Card>)}</div>}
+              {textModelsLoading ? <p className="py-8 text-center text-sm text-muted-foreground">正在加载文本模型...</p> : textModels.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">暂无配置的文本模型</p> : <div className="grid gap-4 md:grid-cols-2">{textModels.map((textModel) => <Card key={textModel.id}><CardHeader><div className="flex items-start justify-between"><div><CardTitle className="text-lg">{textModel.name}</CardTitle><div className="mt-2 flex flex-wrap gap-2">{textModel.isDefault && <Badge>默认</Badge>}<Badge variant="outline">{textModel.model}</Badge><Badge variant="outline">{textModel.apiProtocol === 'responses' ? 'Responses' : 'Chat Completions'}</Badge>{textModel.capabilities.vision && <Badge variant="secondary">视觉</Badge>}{textModel.capabilities.jsonMode && <Badge variant="secondary">JSON</Badge>}{textModel.capabilities.imageGeneration && <Badge variant="secondary">图片生成</Badge>}{textModel.capabilities.imageEditing && <Badge variant="secondary">图片编辑</Badge>}{textModel.capabilities.referenceImage && <Badge variant="secondary">参考图</Badge>}{!textModel.isActive && <Badge variant="destructive">已停用</Badge>}</div></div><Button variant="ghost" size="icon" aria-label={`删除 ${textModel.name}`} onClick={() => handleDeleteTextModel(textModel.id)}><Trash2 className="h-4 w-4" /></Button></div></CardHeader><CardContent className="space-y-3"><p className="truncate text-sm text-muted-foreground">{textModel.baseURL}</p>{textModel.testStatus && <div className="space-y-1"><div className="flex flex-wrap items-center gap-2">{textModel.testStatus === 'passed' && <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">实测通过</Badge>}{textModel.testStatus === 'partial' && <Badge variant="secondary" className="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">实测部分通过</Badge>}{textModel.testStatus === 'failed' && <Badge variant="destructive">实测未通过</Badge>}{textModel.lastTestedAt && <span className="text-xs text-muted-foreground">{new Date(textModel.lastTestedAt).toLocaleString()}</span>}</div>{textModel.testError && <p className="break-all text-xs text-destructive">{textModel.testError}</p>}</div>}<div className="flex gap-2"><Button variant="outline" size="sm" className="flex-1" onClick={() => handleTestTextModel(textModel.id)} disabled={textTesting}>{textTesting ? <><Loader2 className="mr-2 h-3 animate-spin" />测试中...</> : '实测能力'}</Button><Button variant="outline" size="sm" onClick={() => handleOpenTextDialog(textModel.id)}>编辑</Button></div></CardContent></Card>)}</div>}
             </CardContent>
           </Card>
         </TabsContent>
@@ -498,7 +634,18 @@ export default function SettingsPage() {
               <Select
                 value={formData.provider}
                 onValueChange={(value) =>
-                  setFormData({ ...formData, provider: value as 'openai' | 'alibaba' | 'relay' })
+                  setFormData((current) => {
+                    const provider = value as 'openai' | 'alibaba' | 'relay';
+                    const currentDefault = IMAGE_PROVIDER_BASE_URLS[current.provider];
+                    return {
+                      ...current,
+                      provider,
+                      baseURL:
+                        !current.baseURL || current.baseURL === currentDefault
+                          ? IMAGE_PROVIDER_BASE_URLS[provider]
+                          : current.baseURL,
+                    };
+                  })
                 }
               >
                 <SelectTrigger>
@@ -535,18 +682,19 @@ export default function SettingsPage() {
               />
             </div>
 
+            <div className="space-y-2">
+              <Label>Base URL</Label>
+              <Input
+                placeholder={IMAGE_PROVIDER_BASE_URLS[formData.provider] || 'https://api.example.com/v1'}
+                value={formData.baseURL}
+                onChange={(e) =>
+                  setFormData({ ...formData, baseURL: e.target.value })
+                }
+              />
+            </div>
+
             {formData.provider === 'relay' && (
               <>
-                <div className="space-y-2">
-                  <Label>Base URL</Label>
-                  <Input
-                    placeholder="https://api.example.com/v1"
-                    value={formData.baseURL}
-                    onChange={(e) =>
-                      setFormData({ ...formData, baseURL: e.target.value })
-                    }
-                  />
-                </div>
                 <div className="space-y-2">
                   <Label>中转站类型</Label>
                   <Select
@@ -604,7 +752,9 @@ export default function SettingsPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               取消
             </Button>
-            <Button onClick={handleSave}>保存</Button>
+          <Button onClick={() => void handleSave()} disabled={imageSaving}>
+            {imageSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />同步中...</> : '保存并同步'}
+          </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -615,13 +765,41 @@ export default function SettingsPage() {
           <div className="space-y-4">
             <div className="space-y-2"><Label>模型名称</Label><Input placeholder="例如：主力文本模型" value={textForm.name} onChange={(e) => setTextForm({ ...textForm, name: e.target.value })} /></div>
             <div className="space-y-2"><Label>Base URL</Label><Input placeholder="https://api.openai.com/v1" value={textForm.baseURL} onChange={(e) => setTextForm({ ...textForm, baseURL: e.target.value })} /></div>
+            <div className="space-y-2"><Label>接口协议</Label><Select value={textForm.apiProtocol} onValueChange={(value: TextModelApiProtocol) => setTextForm({ ...textForm, apiProtocol: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chat_completions">Chat Completions</SelectItem><SelectItem value="responses">Responses</SelectItem></SelectContent></Select></div>
             <div className="space-y-2"><Label>API Key</Label><Input type="password" placeholder={editingTextModel ? '留空则保持原密钥不变' : 'sk-...'} value={textForm.apiKey} onChange={(e) => setTextForm({ ...textForm, apiKey: e.target.value })} /></div>
             <div className="space-y-2"><Label>模型名</Label><Input placeholder="例如：gpt-5.6-terra、qwen-vl-max" value={textForm.model} onChange={(e) => setTextForm({ ...textForm, model: e.target.value, capabilities: inferModelCapabilities(e.target.value) })} /></div>
-            <div className="space-y-3 rounded-md border p-3"><Label>模型能力</Label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.vision} onCheckedChange={(checked) => updateTextCapabilities('vision', checked === true)} />支持视觉输入</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.jsonMode} onCheckedChange={(checked) => updateTextCapabilities('jsonMode', checked === true)} />支持 JSON 输出</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.ocr} onCheckedChange={(checked) => updateTextCapabilities('ocr', checked === true)} />适合识别图片文字</label></div>
+            <div className="space-y-3 rounded-md border p-3"><Label>模型能力</Label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.vision} onCheckedChange={(checked) => updateTextCapabilities('vision', checked === true)} />支持视觉输入</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.jsonMode} onCheckedChange={(checked) => updateTextCapabilities('jsonMode', checked === true)} />支持 JSON 输出</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.ocr} onCheckedChange={(checked) => updateTextCapabilities('ocr', checked === true)} />适合识别图片文字</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.imageGeneration} onCheckedChange={(checked) => updateTextCapabilities('imageGeneration', checked === true)} />支持图片生成</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.imageEditing} onCheckedChange={(checked) => updateTextCapabilities('imageEditing', checked === true)} />支持图片编辑/图生图</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.capabilities.referenceImage} onCheckedChange={(checked) => updateTextCapabilities('referenceImage', checked === true)} />支持接收参考图</label></div>
             <label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.isActive} onCheckedChange={(checked) => setTextForm({ ...textForm, isActive: checked === true })} />启用此模型</label>
             <label className="flex items-center gap-2 text-sm"><Checkbox checked={textForm.isDefault} onCheckedChange={(checked) => setTextForm({ ...textForm, isDefault: checked === true })} />设为默认模型</label>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setTextDialogOpen(false)}>取消</Button><Button onClick={handleSaveTextModel}>保存</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 旧图片配置迁移预览对话框（V2 5.2） */}
+      <Dialog open={migrateDialogOpen} onOpenChange={setMigrateDialogOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>迁移图片模型到服务端</DialogTitle>
+            <DialogDescription>
+              迁移后营销助手2才能使用这些模型。API Key 只在服务端加密保存，迁移失败不会删除旧配置。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-64 space-y-2 overflow-y-auto">
+            {services.map((service) => (
+              <div key={service.id} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+                <span className="font-medium">{service.name}</span>
+                <span className="text-muted-foreground">{getProviderLabel(service.provider)}{service.model ? ` · ${service.model}` : ''}</span>
+              </div>
+            ))}
+            {services.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">没有可迁移的配置</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMigrateDialogOpen(false)}>取消</Button>
+            <Button onClick={handleMigrateImageServices} disabled={migrating || services.length === 0}>
+              {migrating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />迁移中...</> : `确认迁移 ${services.length} 个配置`}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

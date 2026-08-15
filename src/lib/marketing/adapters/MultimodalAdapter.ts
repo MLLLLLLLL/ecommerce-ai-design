@@ -38,6 +38,7 @@ export class MultimodalAdapter {
         baseURL: config.baseURL || 'https://api.openai.com/v1',
         apiKey: config.apiKey,
         model: config.model || 'gpt-4o',
+        apiProtocol: config.apiProtocol,
       });
   }
 

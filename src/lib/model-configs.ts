@@ -6,6 +6,7 @@ import type {
   ModelCapabilities,
   ModelConfigSummary,
   TestedCapabilities,
+  TextModelApiProtocol,
 } from '@/types/model-config';
 
 const DEFAULT_CAPABILITIES: ModelCapabilities = {
@@ -13,7 +14,13 @@ const DEFAULT_CAPABILITIES: ModelCapabilities = {
   jsonMode: false,
   ocr: false,
   imageGeneration: false,
+  imageEditing: false,
+  referenceImage: false,
 };
+
+export function toTextModelApiProtocol(value: unknown): TextModelApiProtocol {
+  return value === 'responses' ? 'responses' : 'chat_completions';
+}
 
 export function toCapabilities(value: unknown): ModelCapabilities {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -25,6 +32,8 @@ export function toCapabilities(value: unknown): ModelCapabilities {
     jsonMode: input.jsonMode === true,
     ocr: input.ocr === true,
     imageGeneration: input.imageGeneration === true,
+    imageEditing: input.imageEditing === true,
+    referenceImage: input.referenceImage === true,
   };
 }
 
@@ -37,6 +46,9 @@ export function toTestedCapabilities(value: unknown): TestedCapabilities | null 
     connection: input.connection === true,
     jsonMode: input.jsonMode === true,
     vision: input.vision === true,
+    imageGeneration: input.imageGeneration === true,
+    imageEditing: input.imageEditing === true,
+    referenceImage: input.referenceImage === true,
   };
 }
 
@@ -47,6 +59,7 @@ export function toModelConfigSummary(config: ModelConfig): ModelConfigSummary {
     provider: config.provider,
     baseURL: config.baseURL,
     model: config.model,
+    apiProtocol: toTextModelApiProtocol(config.apiProtocol),
     capabilities: toCapabilities(config.capabilities),
     isActive: config.isActive,
     isDefault: config.isDefault,
@@ -64,9 +77,11 @@ export function toRuntimeAIConfig(config: ModelConfig): AIServiceConfig {
   return {
     id: config.id,
     name: config.name,
-    provider: 'openai',
+    // 保留服务端保存的提供商；否则中转站图片模型会被误建成 OpenAI 直连适配器。
+    provider: config.provider as AIServiceConfig['provider'],
     baseURL: config.baseURL,
     model: config.model,
+    apiProtocol: toTextModelApiProtocol(config.apiProtocol),
     apiKey: decryptServerSecret(config.apiKeyEncrypted),
   };
 }

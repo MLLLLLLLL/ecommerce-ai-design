@@ -71,6 +71,7 @@ export async function generateSeoTask(
     baseURL: model.runtimeConfig.baseURL ?? 'https://api.openai.com/v1',
     apiKey: model.runtimeConfig.apiKey,
     model: model.runtimeConfig.model ?? 'gpt-4o',
+    apiProtocol: model.runtimeConfig.apiProtocol,
   });
   const engine = new SeoEngine(client);
 

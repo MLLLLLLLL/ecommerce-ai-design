@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { resolveTextModelForPurpose } from '@/lib/model-configs';
+import { HttpTextCompletionClient } from '@/lib/ai/http-text-completion-client';
 
 // 提示词优化模式
 type OptimizeMode = 'text-to-image' | 'image-to-image';
@@ -60,6 +61,31 @@ export async function POST(req: NextRequest) {
         { type: 'text', text: `用户输入：\n${prompt.trim()}` },
         { type: 'image_url', image_url: { url: image } },
       ];
+    }
+
+    if (runtimeConfig.apiProtocol === 'responses') {
+      const client = new HttpTextCompletionClient({
+        baseURL,
+        apiKey: runtimeConfig.apiKey,
+        model: runtimeConfig.model ?? 'gpt-4o',
+        apiProtocol: 'responses',
+      });
+      const text = await client.complete({
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPTS[mode] },
+          { role: 'user', content },
+        ],
+        temperature: 0.2,
+        maxTokens: 4000,
+      });
+      const payload = `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: [DONE]\n\n`;
+      return new Response(payload, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+        },
+      });
     }
 
     const upstream = await fetch(`${baseURL}/chat/completions`, {

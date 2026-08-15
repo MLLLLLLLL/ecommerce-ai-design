@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useAIService } from '@/hooks/useAIService';
+import { useAIServices } from '@/hooks/useAIService';
 import { PromptInput } from '@/components/text-to-image/PromptInput';
 import {
   ParameterPanel,
@@ -9,6 +9,7 @@ import {
 } from '@/components/text-to-image/ParameterPanel';
 import { ResultGallery } from '@/components/text-to-image/ResultGallery';
 import { GenerationStatus } from '@/components/ai/GenerationStatus';
+import { ImageModelSelector } from '@/components/ai/ImageModelSelector';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, AlertCircle } from 'lucide-react';
@@ -27,7 +28,8 @@ interface Asset {
 }
 
 export default function TextToImagePage() {
-  const { config, isReady } = useAIService();
+  const { services, activeServiceId } = useAIServices();
+  const [modelId, setModelId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [negativePrompt, setNegativePrompt] = useState('');
   const [params, setParams] = useState<GenerationParams>({
@@ -40,6 +42,15 @@ export default function TextToImagePage() {
   const [results, setResults] = useState<Asset[]>([]);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const defaultModelId =
+    services.find((service) => service.id === activeServiceId)?.id ?? services[0]?.id ?? null;
+  const selectedModelId =
+    modelId && services.some((service) => service.id === modelId)
+      ? modelId
+      : defaultModelId;
+  const config = services.find((service) => service.id === selectedModelId) ?? null;
+  const isReady = Boolean(config);
 
   const handleGenerate = async () => {
     if (!isReady || !config) {
@@ -77,10 +88,11 @@ export default function TextToImagePage() {
 
       setResults((prev) => [...data.assets, ...prev]);
       toast.success(`成功生成 ${data.count} 张图片`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Generation error:', error);
-      setError(error.message || '生成失败，请重试');
-      toast.error(error.message || '生成失败');
+      const message = error instanceof Error ? error.message : '生成失败，请重试';
+      setError(message);
+      toast.error(message);
     } finally {
       setGenerating(false);
     }
@@ -100,9 +112,9 @@ export default function TextToImagePage() {
 
       setResults((prev) => prev.filter((asset) => asset.id !== id));
       toast.success('删除成功');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Delete error:', error);
-      toast.error(error.message || '删除失败');
+      toast.error(error instanceof Error ? error.message : '删除失败');
     }
   };
 
@@ -130,6 +142,13 @@ export default function TextToImagePage() {
             negativePrompt={negativePrompt}
             onPromptChange={setPrompt}
             onNegativePromptChange={setNegativePrompt}
+            disabled={generating}
+          />
+
+          <ImageModelSelector
+            services={services}
+            value={selectedModelId}
+            onValueChange={setModelId}
             disabled={generating}
           />
 
@@ -161,16 +180,12 @@ export default function TextToImagePage() {
           <ResultGallery
             results={results}
             onDelete={handleDelete}
-            onView={(asset) => {
-              // TODO: 实现预览功能
-              console.log('View asset:', asset);
-            }}
           />
         </div>
 
         {/* 侧边栏 - 状态面板 */}
         <div className="lg:col-span-1">
-          <GenerationStatus />
+          <GenerationStatus config={config} />
         </div>
       </div>
     </div>

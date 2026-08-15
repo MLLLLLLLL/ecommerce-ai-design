@@ -7,6 +7,8 @@ import {
   appendTaskEvent,
   maybeAggregateTask,
 } from '@/lib/marketing/async/aggregation';
+import { maybeAggregateMarketing2Step } from '@/lib/marketing2/aggregation';
+import { MARKETING2_MODULE } from '@/lib/marketing2/workflow-registry';
 import {
   LEASE_DURATION_MS,
   WORKER_MAX_CONCURRENT,
@@ -89,12 +91,12 @@ export async function recoverExpiredLeases(): Promise<number> {
   return result.count;
 }
 
-/** 查询可领取的候选（pending 且依赖已满足、任务未取消）。 */
+/** 查询可领取的候选（pending 且依赖已满足、任务未取消、未暂停）。 */
 async function findCandidates(limit: number): Promise<MarketingTaskItem[]> {
   const items = await prisma.marketingTaskItem.findMany({
     where: {
       status: 'pending',
-      task: { cancelRequestedAt: null },
+      task: { cancelRequestedAt: null, pausedAt: null },
     },
     include: { task: true },
     orderBy: [{ createdAt: 'asc' }],
@@ -123,7 +125,7 @@ async function claimCandidate(item: MarketingTaskItem): Promise<MarketingTaskIte
       id: item.id,
       status: 'pending',
       OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: now } }],
-      task: { cancelRequestedAt: null },
+      task: { cancelRequestedAt: null, pausedAt: null },
     },
     data: {
       status: 'running',
@@ -147,6 +149,19 @@ async function claimNextItem(): Promise<MarketingTaskItem | null> {
   return null;
 }
 
+/** 按任务模块分派聚合：营销助手2按步骤聚合，旧模块按全任务聚合。 */
+async function aggregateTaskByModule(taskId: string): Promise<void> {
+  const task = await prisma.marketingTask.findUnique({
+    where: { id: taskId },
+    select: { module: true },
+  });
+  if (task?.module === MARKETING2_MODULE) {
+    await maybeAggregateMarketing2Step(taskId);
+  } else {
+    await maybeAggregateTask(taskId);
+  }
+}
+
 async function executeClaimed(item: MarketingTaskItem): Promise<void> {
   const startedAt = Date.now();
   try {
@@ -157,7 +172,7 @@ async function executeClaimed(item: MarketingTaskItem): Promise<void> {
         where: { id: item.id },
         data: { status: 'cancelled', completedAt: new Date() },
       });
-      await maybeAggregateTask(item.taskId);
+      await aggregateTaskByModule(item.taskId);
       return;
     }
 
@@ -192,7 +207,7 @@ async function executeClaimed(item: MarketingTaskItem): Promise<void> {
       { kind: item.kind, durationMs: Date.now() - startedAt },
       item.id
     );
-    await maybeAggregateTask(item.taskId);
+    await aggregateTaskByModule(item.taskId);
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 1000) : '未知错误';
     const attempts = item.attempts; // claim 时已 increment
@@ -236,7 +251,7 @@ async function executeClaimed(item: MarketingTaskItem): Promise<void> {
         { kind: item.kind, attempt: attempts, retrying: false, error: message },
         item.id
       );
-      await maybeAggregateTask(item.taskId);
+      await aggregateTaskByModule(item.taskId);
     }
   }
 }
@@ -260,7 +275,7 @@ export async function cancelMarketingTask(userId: string, taskId: string): Promi
     data: { status: 'cancelled', completedAt: new Date() },
   });
   await appendTaskEvent(taskId, userId, 'cancel_requested');
-  await maybeAggregateTask(taskId);
+  await aggregateTaskByModule(taskId);
 }
 
 /** 重试单个 item：失败/取消项重置为 pending，任务回到执行中。 */

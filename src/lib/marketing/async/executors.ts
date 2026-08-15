@@ -8,6 +8,8 @@ import { GeoEngine } from '@/lib/marketing/geo-engine';
 import { InsightEngine } from '@/lib/search/insight-engine';
 import { QueryBudget } from '@/lib/search/SearchAdapter';
 import { resolveActiveSearchService } from '@/lib/search/search-service-config';
+import { executeMarketing2Item } from '@/lib/marketing2/step-executors';
+import { MARKETING2_MODULE } from '@/lib/marketing2/workflow-registry';
 import type {
   MarketingFact,
   MarketingTaskCreateInput,
@@ -31,6 +33,11 @@ export async function executeMarketingItem(
   task: MarketingTask,
   item: MarketingTaskItem
 ): Promise<unknown> {
+  // 营销助手2任务派发到专用执行器（模型在服务端解析，图片结果落资产版本）
+  if (task.module === MARKETING2_MODULE) {
+    return executeMarketing2Item(task, item);
+  }
+
   const input = itemInput(item);
   const purpose = item.role === 'vision' ? 'vision' : 'content';
   const model = await resolveModelWithPrecheck(item.userId, item.modelId ?? '', purpose);
@@ -38,6 +45,7 @@ export async function executeMarketingItem(
     baseURL: model.runtimeConfig.baseURL ?? 'https://api.openai.com/v1',
     apiKey: model.runtimeConfig.apiKey,
     model: model.runtimeConfig.model ?? 'gpt-4o',
+    apiProtocol: model.runtimeConfig.apiProtocol,
   });
 
   switch (item.kind) {
