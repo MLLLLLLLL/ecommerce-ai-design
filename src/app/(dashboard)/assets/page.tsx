@@ -189,6 +189,39 @@ export default function AssetsPage() {
     setMultiSelectMode(false);
   };
 
+  const handleBatchDownload = async () => {
+    if (selectedIds.length === 0) {
+      toast.error('请先选择资源');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/assets/batch/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assetIds: selectedIds }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error || '批量下载失败');
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `assets-${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.success(`已打包下载 ${selectedIds.length} 个资源`);
+    } catch (error) {
+      console.error('Batch download error:', error);
+      toast.error(error instanceof Error ? error.message : '批量下载失败');
+    }
+  };
+
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -280,6 +313,7 @@ export default function AssetsPage() {
           onOperationComplete={() => void loadAssets()}
           onAddToCanvas={() => openBatchProjectPicker('canvas')}
           onAddToWorkflow={() => openBatchProjectPicker('workflow')}
+          onDownload={handleBatchDownload}
         />
       )}
 
@@ -397,6 +431,8 @@ export default function AssetsPage() {
                   <Button
                     variant="outline"
                     size="sm"
+                    title="单独下载"
+                    aria-label={`单独下载 ${asset.filename}`}
                     onClick={() => {
                       const link = document.createElement('a');
                       link.href = getAssetUrl(asset.filepath);

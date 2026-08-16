@@ -103,7 +103,10 @@ export function BatchGenerationStep({
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {items.map((item: RunItemApi) => {
             const meta = ITEM_STATUS_META[item.status] ?? ITEM_STATUS_META.pending;
-            const result = item.result as { url?: string; filename?: string } | null;
+            const result = item.result as { url?: string; filename?: string; urls?: string[]; filenames?: string[] } | null;
+            const resultUrls = result?.urls?.length ? result.urls : result?.url ? [result.url] : [];
+            const resultFilenames = result?.filenames;
+            const resultFilename = result?.filename;
             return (
               <div key={item.id} className="space-y-1.5 rounded-md border p-2">
                 <div className="flex items-center justify-between gap-1">
@@ -112,20 +115,25 @@ export function BatchGenerationStep({
                     {meta.label}
                   </Badge>
                 </div>
-                {item.status === 'completed' && result?.url ? (
-                  <button
-                    type="button"
-                    className="group relative block aspect-square w-full overflow-hidden rounded focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                    aria-label={`查看${kindLabel(item.kind)}原图`}
-                    title="查看原图"
-                    onClick={() => setPreviewImage({ src: result.url!, title: result.filename ?? kindLabel(item.kind) })}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={result.url} alt={kindLabel(item.kind)} className="h-full w-full object-cover" />
-                    <span className="absolute right-2 top-2 rounded bg-black/65 p-1.5 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                      <Maximize2 className="h-3.5 w-3.5" />
-                    </span>
-                  </button>
+                {item.status === 'completed' && resultUrls.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-1">
+                    {resultUrls.map((url, outputIndex) => (
+                      <button
+                        key={url}
+                        type="button"
+                        className="group relative block aspect-square w-full overflow-hidden rounded focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                        aria-label={`查看${kindLabel(item.kind)}第${outputIndex + 1}张原图`}
+                        title="查看原图"
+                        onClick={() => setPreviewImage({ src: url, title: resultFilenames?.[outputIndex] ?? resultFilename ?? kindLabel(item.kind) })}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={url} alt={`${kindLabel(item.kind)} ${outputIndex + 1}`} className="h-full w-full object-cover" />
+                        <span className="absolute right-1 top-1 rounded bg-black/65 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                          <Maximize2 className="h-3 w-3" />
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 ) : (
                   <div className="flex aspect-square w-full items-center justify-center rounded bg-muted text-xs text-muted-foreground">
                     {item.status === 'running' ? (

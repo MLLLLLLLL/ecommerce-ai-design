@@ -46,9 +46,25 @@ export async function GET(
       return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
     }
     const user = await getCurrentUser();
-    const relativePath = path.relative(process.cwd(), realRequested).replace(/\\/g, '/');
+    // 数据库中的 filepath 由不同平台的 path.join 写入，Windows 下可能保留反斜杠。
+    // 文件 URL 始终使用正斜杠，因此鉴权查询需要同时兼容两种分隔符和相对路径前缀。
+    const relativePath = path.relative(process.cwd(), realRequested);
+    const normalizedRelativePath = relativePath.replace(/\\/g, '/');
+    const dbPathCandidates = [
+      relativePath,
+      normalizedRelativePath,
+      `.${path.sep}${relativePath}`,
+      `./${normalizedRelativePath}`,
+      realRequested,
+    ].filter((candidate, index, candidates) => candidate && candidates.indexOf(candidate) === index);
     const asset = await prisma.asset.findFirst({
-      where: { userId: user.id, filepath: { in: [relativePath, realRequested] } },
+      where: {
+        userId: user.id,
+        OR: [
+          { filepath: { in: dbPathCandidates } },
+          { thumbnail: { in: dbPathCandidates } },
+        ],
+      },
       select: { id: true },
     });
     if (!asset) return NextResponse.json({ success: false, error: 'File not found' }, { status: 404 });

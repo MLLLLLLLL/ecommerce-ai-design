@@ -22,6 +22,7 @@ import {
 import { parseItemKind, STEP_CAPABILITY_MATRIX } from '@/lib/marketing2/workflow-registry';
 import { getPromptSlotDefinitions, type PromptPlanKind, type PromptSlotDefinition } from '@/lib/marketing2/prompt-planning';
 import { visualAnalysisModelSchema } from '@/lib/marketing2/visual-analysis';
+import { qualityCheckModelSchema, QUALITY_CHECK_REPAIR_PROMPT } from '@/lib/marketing2/quality-check';
 import { prisma } from '@/lib/db/prisma';
 import { getAssetUrl } from '@/lib/utils';
 import type { ModelCapabilityKey } from '@/types/model-config';
@@ -542,6 +543,16 @@ async function executeImageGeneration(
   const productName = String(input.productName ?? task.productName ?? '产品');
   const referenceImages = (input.referenceImages as string[]) ?? [];
   const ratio = String(input.ratio ?? '1:1');
+  const generationParams = (input.generationParams as {
+    width?: number;
+    height?: number;
+    samples?: number;
+    steps?: number;
+    cfgScale?: number;
+    seed?: number;
+    resolution?: '1k' | '2k' | '4k';
+    aspect?: string;
+  } | undefined) ?? {};
 
   if (!prompt.trim()) {
     throw new Marketing2Error('INPUT_INVALID', `第 ${index} 张提示词为空`);
@@ -549,7 +560,18 @@ async function executeImageGeneration(
 
   const model = await resolveItemModel(item, 'batch_generation');
   const adapter = createImageAdapter(model);
-  const { width, height } = ratioToSize(ratio);
+  const fallbackSize = ratioToSize(ratio);
+  const width = generationParams.width ?? fallbackSize.width;
+  const height = generationParams.height ?? fallbackSize.height;
+  const samples = Math.min(4, Math.max(1, generationParams.samples ?? 1));
+  const requestParams = {
+    width,
+    height,
+    samples,
+    steps: generationParams.steps,
+    cfgScale: generationParams.cfgScale,
+    seed: generationParams.seed,
+  };
 
   let urls: string[];
   if (referenceImages.length > 0) {
@@ -559,25 +581,20 @@ async function executeImageGeneration(
       image: reference,
       prompt,
       negativePrompt: negativePrompt || undefined,
-      width,
-      height,
-      samples: 1,
+      ...requestParams,
       strength: 0.6,
     });
   } else {
     urls = await adapter.textToImage({
       prompt,
       negativePrompt: negativePrompt || undefined,
-      width,
-      height,
-      samples: 1,
+      ...requestParams,
     });
   }
   if (!urls.length) {
     throw new Marketing2Error('UPSTREAM_FAILED', '生成未返回图片', { httpStatus: 502 });
   }
 
-  const buffer = await fetchGeneratedImage(urls[0]);
   const snapshot = buildModelSnapshot(model);
 
   // 父级资产：参考图中属于本任务的净化底图
@@ -590,27 +607,44 @@ async function executeImageGeneration(
     parentAssetId = parent?.id ?? null;
   }
 
-  const filename = buildImageFilename({ productName, kind, index, keyword });
-  const { asset, url } = await createDerivedAsset({
-    userId: item.userId,
-    taskId: task.id,
-    stepKey: 'batch_generation',
-    buffer,
-    filename,
-    derivedReason: kind === 'main_image' ? '主图生成' : '详情页生成',
-    parentAssetId,
-    prompt,
-    negativePrompt: negativePrompt || null,
-    modelSnapshot: snapshot,
-    parameters: { ratio, keyword, index, referenceImages },
-  });
+  const assets = [];
+  for (const [outputIndex, url] of urls.slice(0, samples).entries()) {
+    const buffer = await fetchGeneratedImage(url);
+    const filename = buildImageFilename({
+      productName,
+      kind,
+      index,
+      keyword,
+      collisionSuffix: outputIndex > 0 ? String(outputIndex + 1) : undefined,
+    });
+    const created = await createDerivedAsset({
+      userId: item.userId,
+      taskId: task.id,
+      stepKey: 'batch_generation',
+      buffer,
+      filename,
+      derivedReason: kind === 'main_image' ? '主图生成' : '详情页生成',
+      parentAssetId,
+      prompt,
+      negativePrompt: negativePrompt || null,
+      modelSnapshot: snapshot,
+      parameters: { ratio, keyword, index, referenceImages, generationParams },
+    });
+    assets.push({ asset: created.asset, url: created.url, filename: created.asset.filename });
+  }
+
+  const first = assets[0];
 
   return {
     kind,
     index,
-    assetId: asset.id,
-    url,
-    filename: asset.filename,
+    assetId: first.asset.id,
+    url: first.url,
+    filename: first.filename,
+    assetIds: assets.map((entry) => entry.asset.id),
+    urls: assets.map((entry) => entry.url),
+    filenames: assets.map((entry) => entry.filename),
+    generationParams,
     modelSnapshot: snapshot,
   };
 }
@@ -618,30 +652,6 @@ async function executeImageGeneration(
 // --------------------------------------------
 // quality_check：十项结构化质检（vision + jsonMode）
 // --------------------------------------------
-
-const qualityCheckModelSchema = z.object({
-  items: z
-    .array(
-      z.object({
-        key: z.enum([
-          'appearance_consistency',
-          'subject_recognition',
-          'fact_truthfulness',
-          'layout_and_text',
-          'detail_decision_chain',
-          'visual_unity',
-          'prop_subordination',
-          'safe_margin',
-          'click_conversion',
-          'splice_fit',
-        ]),
-        status: z.enum(['passed', 'warning', 'failed']),
-        score: z.number().min(0).max(10).optional(),
-        evidence: z.string().max(500).optional(),
-      })
-    )
-    .min(1),
-});
 
 const QUALITY_CHECK_LABELS: Record<string, string> = {
   appearance_consistency: '外观一致性：产品外观与外观锁定描述一致',
@@ -703,7 +713,11 @@ async function executeQualityCheck(
       maxTokens: 3000,
     },
     qualityCheckModelSchema,
-    { label: '十项质检' }
+    {
+      label: '十项质检',
+      repair: true,
+      repairPrompt: QUALITY_CHECK_REPAIR_PROMPT,
+    }
   );
 
   const checkedAt = new Date().toISOString();

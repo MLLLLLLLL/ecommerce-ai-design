@@ -250,6 +250,16 @@ export const promptPlanItemSchema = z.object({
   prompt: z.string().trim().min(1).max(4000),
   negativePrompt: z.string().trim().max(1000).optional(),
   textModules: z.array(z.string().trim().max(200)).default([]),
+  generationParams: z.object({
+    width: z.number().int().min(256).max(16384),
+    height: z.number().int().min(256).max(16384),
+    samples: z.number().int().min(1).max(4).default(1),
+    steps: z.number().int().min(10).max(50).optional(),
+    cfgScale: z.number().min(1).max(20).optional(),
+    seed: z.number().int().min(0).optional(),
+    resolution: z.enum(['1k', '2k', '4k']).optional(),
+    aspect: z.enum(['1:1', '16:9', '9:16', '4:3', '3:4']).optional(),
+  }).strict().optional(),
 });
 
 export const promptPlanningOutputSchema = z

@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { MoreVertical, Tag, FolderInput, Trash2, Layout, Workflow } from 'lucide-react';
+import { Download, MoreVertical, Tag, FolderInput, Trash2, Layout, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface BatchOperationsProps {
@@ -36,6 +36,7 @@ interface BatchOperationsProps {
   onOperationComplete: () => void;
   onAddToCanvas: () => void;
   onAddToWorkflow: () => void;
+  onDownload: () => Promise<void>;
 }
 
 interface Tag {
@@ -55,6 +56,7 @@ export function BatchOperations({
   onOperationComplete,
   onAddToCanvas,
   onAddToWorkflow,
+  onDownload,
 }: BatchOperationsProps) {
   const [tags, setTags] = useState<Tag[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -151,6 +153,19 @@ export function BatchOperations({
     setDialogOpen(true);
   };
 
+  const handleBatchDownload = async () => {
+    if (selectedIds.length === 0) {
+      toast.error('请先选择资源');
+      return;
+    }
+    setProcessing(true);
+    try {
+      await onDownload();
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   return (
     <div className="flex items-center gap-2 rounded-lg bg-primary/10 p-2">
       <span className="text-sm font-medium">
@@ -185,6 +200,10 @@ export function BatchOperations({
           <DropdownMenuItem onClick={onAddToWorkflow}>
             <Workflow className="mr-2 h-4 w-4" />
             添加到工作流
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => void handleBatchDownload()} disabled={processing}>
+            <Download className="mr-2 h-4 w-4" />
+            批量下载
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

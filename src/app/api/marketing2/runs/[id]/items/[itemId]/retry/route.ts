@@ -8,7 +8,7 @@ type RouteContext = { params: Promise<{ id: string; itemId: string }> };
 
 /**
  * POST /api/marketing2/runs/:id/items/:itemId/retry
- * 单项重试：仅失败/取消项；重复请求返回当前状态，不重复创建。
+ * 单项重试：失败/取消项，或待确认中的提示词方案；重复请求返回当前状态，不重复创建。
  */
 export async function POST(request: NextRequest, context: RouteContext) {
   try {

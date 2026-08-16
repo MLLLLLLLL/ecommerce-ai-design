@@ -73,6 +73,7 @@ test.describe('工作流运行页', () => {
     await expect(page.getByText('准备产品图', { exact: true })).toBeVisible();
     await expect(page.getByText('底图精修（可选）', { exact: true })).toBeVisible();
     await expect(page.getByText('产品信息')).toBeVisible();
+    await expect(page.getByRole('button', { name: '保存到草稿' })).toBeVisible();
     await expect(page.getByRole('button', { name: '保存并继续' })).toBeVisible();
   });
 

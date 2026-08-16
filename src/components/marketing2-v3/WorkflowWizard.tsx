@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronLeft, Download, Loader2, Square } from 'lucide-react';
+import { Check, ChevronLeft, Download, Loader2, Save, Square } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -196,6 +196,13 @@ export function WorkflowWizardV3({ initialRunId }: { initialRunId?: string | nul
     return runId;
   }, [detail, dirty, input, refresh, runId, selections]);
 
+  const saveDraftOnly = () => {
+    void runAction(async () => {
+      await saveDraft();
+      toast.success('草稿已保存');
+    });
+  };
+
   const saveSelection = useCallback(async (scopeKey: string, modelId: string) => {
     if (!detail || !runId) { toast.info('请先保存产品图和任务信息'); return; }
     await marketing2Api.patchModelSelections(runId, { expectedVersion: detail.task.taskVersion, changes: [{ scopeKey, modelId }] });
@@ -239,7 +246,13 @@ export function WorkflowWizardV3({ initialRunId }: { initialRunId?: string | nul
   const approve = (stepKey: string) => runAction(async () => {
     if (!detail || !runId) return;
     const body: { expectedVersion: number; edits?: unknown; overrides?: QualityOverride[] } = { expectedVersion: detail.task.taskVersion };
-    if (stepKey === 'prompt_planning' && edits?.plans) body.edits = { plans: edits.plans };
+    if (stepKey === 'prompt_planning') {
+      if (!edits?.plans || edits.plans.some((plan) => !plan.generationParams)) {
+        toast.error('请逐个打开“生成参数设置”，确认后再继续');
+        return;
+      }
+      body.edits = { plans: edits.plans };
+    }
     if (stepKey === 'visual_analysis' && edits?.appearanceLock) body.edits = { appearanceLock: edits.appearanceLock };
     if (stepKey === 'quality_repair' && overrides.length) body.overrides = overrides;
     await marketing2Api.approve(runId, stepKey, body); setEdits(null); setOverrides([]); await refresh();
@@ -271,7 +284,7 @@ export function WorkflowWizardV3({ initialRunId }: { initialRunId?: string | nul
 
   const changeInput = (next: Record<string, unknown>) => { setInput(next); setDirty(true); };
   const stepState = (key: string) => states[key] ?? 'idle';
-  const statusLabel = detail?.task.status === 'completed' ? '已完成' : detail?.task.status === 'cancelled' ? '已停止' : dirty ? '未保存' : '已保存';
+  const statusLabel = detail?.task.status === 'completed' ? '已完成' : detail?.task.status === 'cancelled' ? '已停止' : dirty || !runId ? '未保存' : '已保存';
 
   let content: React.ReactNode;
   if (page === 'product_preparation') {
@@ -298,7 +311,7 @@ export function WorkflowWizardV3({ initialRunId }: { initialRunId?: string | nul
         <ModelSelect label="产品视觉识别模型" value={selections.visualAnalysis} models={models} capabilities={['vision', 'jsonMode']} onChange={(modelId) => void saveSelection('visualAnalysis', modelId)} />
         <ModelSelect label="提示词生成模型" value={selections.promptGeneration} models={models} capabilities={['jsonMode']} onChange={(modelId) => void saveSelection('promptGeneration', modelId)} />
       </div>
-      {detail && <PromptPlanningStep detail={detail} editableAnalysis={activeStep === 'visual_analysis' && stepState(activeStep) === 'awaiting_review'} editablePlans={activeStep === 'prompt_planning' && stepState(activeStep) === 'awaiting_review'} edits={edits} onEditsChange={setEdits} onRetryItem={(itemId) => void runAction(async () => { if (!runId) return; await marketing2Api.retryItem(runId, itemId); await refresh(); })} />}
+      {detail && <PromptPlanningStep detail={detail} editableAnalysis={activeStep === 'visual_analysis' && stepState(activeStep) === 'awaiting_review'} editablePlans={activeStep === 'prompt_planning' && stepState(activeStep) === 'awaiting_review'} edits={edits} onEditsChange={setEdits} onRetryItem={(itemId) => void runAction(async () => { if (!runId) return; await marketing2Api.retryItem(runId, itemId); await refresh(); })} busy={busy} />}
     </div>;
   } else if (page === 'image_generation') {
     content = <div className="space-y-5">
@@ -377,7 +390,28 @@ export function WorkflowWizardV3({ initialRunId }: { initialRunId?: string | nul
         </div>
       </section>
     )}
-    <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 backdrop-blur"><div className="container mx-auto flex items-center justify-end gap-3 p-3 sm:px-6"><Button variant="default" disabled={busy || taskRunning || page === 'product_preparation'} onClick={() => router.push('/marketing2')}>返回任务列表</Button><Button disabled={busy || taskRunning || detail?.task.status === 'completed'} onClick={action.onClick}>{taskRunning ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />进行中</> : action.label}</Button></div></div>
+    <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 backdrop-blur">
+      <div className="container mx-auto flex flex-wrap items-center justify-between gap-3 p-3 sm:px-6">
+        <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+          <span className={statusLabel === '未保存' ? 'font-medium text-amber-700 dark:text-amber-300' : undefined}>{statusLabel}</span>
+          {runId && <span className="hidden sm:inline">当前步骤内容可单独保存</span>}
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="outline" disabled={busy || taskRunning || page === 'product_preparation'} onClick={() => router.push('/marketing2')}>返回任务列表</Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy || taskRunning || detail?.task.status === 'completed' || (Boolean(runId) && !dirty)}
+            onClick={saveDraftOnly}
+          >
+            <Save className="mr-2 h-4 w-4" />保存到草稿
+          </Button>
+          <Button disabled={busy || taskRunning || detail?.task.status === 'completed'} onClick={action.onClick}>
+            {taskRunning ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />进行中</> : action.label}
+          </Button>
+        </div>
+      </div>
+    </div>
   </div>;
 }
 

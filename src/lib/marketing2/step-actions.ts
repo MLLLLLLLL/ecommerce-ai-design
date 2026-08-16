@@ -325,6 +325,7 @@ async function buildStepItems(
             keyword: plan.keyword,
             productName: (input.productName as string) ?? task.productName,
             referenceImages,
+            generationParams: plan.generationParams,
             ratio:
               plan.kind === 'main_image'
                 ? ((input.mainImageRatio as string) ?? '1:1')
@@ -381,7 +382,16 @@ async function resolveBatchPlans(
   stepResults: Record<string, Record<string, unknown>>
 ) {
   const planningResult = stepResults.prompt_planning?.result as
-    | { plans?: { kind: 'main_image' | 'detail_page'; index: number; keyword?: string; prompt: string; negativePrompt?: string }[] }
+    | {
+        plans?: {
+          kind: 'main_image' | 'detail_page';
+          index: number;
+          keyword?: string;
+          prompt: string;
+          negativePrompt?: string;
+          generationParams?: Record<string, unknown>;
+        }[];
+      }
     | undefined;
   if (planningResult?.plans?.length) return planningResult.plans;
 
@@ -515,8 +525,8 @@ export async function approveStep(
   const stepItems = items.filter((item) => item.stepKey === stepKey);
   let result = aggregateStepResult(stepKey, stepItems);
 
-  if (body.data.edits !== undefined) {
-    result = validateStepEdits(stepKey, result, body.data.edits);
+  if (body.data.edits !== undefined || stepKey === 'prompt_planning') {
+    result = validateStepEdits(stepKey, result, body.data.edits ?? result);
   }
 
   // 质检门禁：failed 必须返修或人工豁免（交互 6.5）
@@ -650,6 +660,16 @@ function validateStepEdits(
                 prompt: z.string().trim().min(1).max(4000),
                 negativePrompt: z.string().trim().max(1000).optional(),
                 textModules: z.array(z.string().trim().max(200)).default([]),
+                generationParams: z.object({
+                  width: z.number().int().min(256).max(16384),
+                  height: z.number().int().min(256).max(16384),
+                  samples: z.number().int().min(1).max(4).default(1),
+                  steps: z.number().int().min(10).max(50).optional(),
+                  cfgScale: z.number().min(1).max(20).optional(),
+                  seed: z.number().int().min(0).optional(),
+                  resolution: z.enum(['1k', '2k', '4k']).optional(),
+                  aspect: z.enum(['1:1', '16:9', '9:16', '4:3', '3:4']).optional(),
+                }).strict(),
               })
             )
             .min(1)
@@ -817,8 +837,15 @@ export async function retryItem(
   if (item.status === 'pending' || item.status === 'running') {
     return { item, deduplicated: true };
   }
-  if (!['failed', 'cancelled'].includes(item.status)) {
-    throw new Marketing2Error('ITEM_RETRY_FORBIDDEN', '仅失败或取消的子项可以重试', {
+  const stepResults = (task.stepResults as Record<string, { approved?: boolean }> | null) ?? {};
+  const canRegeneratePrompt =
+    task.currentStep === 'prompt_planning' &&
+    task.awaitingReview &&
+    item.stepKey === 'prompt_planning' &&
+    item.kind.startsWith('prompt_plan:') &&
+    stepResults.prompt_planning?.approved !== true;
+  if (!['failed', 'cancelled'].includes(item.status) && !(item.status === 'completed' && canRegeneratePrompt)) {
+    throw new Marketing2Error('ITEM_RETRY_FORBIDDEN', '仅失败或取消的子项，或待确认中的提示词方案可以重试', {
       httpStatus: 400,
     });
   }

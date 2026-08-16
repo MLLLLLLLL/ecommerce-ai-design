@@ -118,8 +118,8 @@ export function QualityRepairStep({
                     <p className="text-sm font-medium">{asset?.filename ?? assetId.slice(0, 8)}</p>
                     <div className="flex flex-wrap gap-1">
                       {item.status !== 'completed' && (
-                        <Badge variant="secondary">
-                          {item.status === 'failed' ? '质检失败' : '质检中...'}
+                      <Badge variant="secondary">
+                          {item.status === 'failed' ? '质检执行失败' : '质检中...'}
                         </Badge>
                       )}
                       {report?.overallStatus && (
@@ -144,6 +144,10 @@ export function QualityRepairStep({
                     </Button>
                   )}
                 </div>
+
+                {item.status === 'failed' && item.error && (
+                  <p className="text-xs text-destructive">执行原因：{item.error}</p>
+                )}
 
                 {report?.items && (
                   <div className="grid gap-1.5 sm:grid-cols-2">
